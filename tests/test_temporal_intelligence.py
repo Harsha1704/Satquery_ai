@@ -26,7 +26,7 @@ class TemporalIntelligenceTests(unittest.TestCase):
    before,after=self._pair(directory); result=TemporalChangeEngine().analyze(TemporalPair(before,after,"2023-01-01","2024-01-01"),minimum_component_pixels=4)
   self.assertGreater(result["statistics"]["changed_area_m2"],0); self.assertGreater(len(result["change_polygons"]["features"]),0)
   self.assertGreaterEqual(result["change_polygons"]["features"][0]["properties"]["pixel_count"],240)
-  self.assertEqual(result["effective_roi"]["crs"],"EPSG:4326");self.assertIsNone(result["model_confidence"])
+  self.assertEqual(result["effective_roi"]["crs"],"EPSG:4326");self.assertEqual(result["change_polygons"]["features"][0]["properties"]["geometry_crs"],"EPSG:4326");self.assertIsNone(result["model_confidence"])
  def test_semantic_transition_matrix_excludes_unchanged_classes(self):
   with TemporaryDirectory() as directory:
    before,after=self._pair(directory); a=np.ones((40,40),dtype=np.uint8);b=a.copy();b[12:28,20:36]=2
@@ -41,6 +41,7 @@ class TemporalIntelligenceTests(unittest.TestCase):
   with TemporaryDirectory() as directory:
    before,after=self._pair(directory)
    with self.assertRaisesRegex(ValueError,"INVALID_TEMPORAL_PAIR"): TemporalPair(before,after,"2025-01-01","2024-01-01").validate()
+   with self.assertRaisesRegex(ValueError,"INVALID_TEMPORAL_PAIR"): TemporalPair(before,after,"not-a-date","2024-01-01").validate()
  def test_identical_pair_is_not_false_change(self):
   with TemporaryDirectory() as directory:
    before,after=self._pair(directory); import shutil;shutil.copy2(before,after);result=TemporalChangeEngine().analyze(TemporalPair(before,after),minimum_component_pixels=4)

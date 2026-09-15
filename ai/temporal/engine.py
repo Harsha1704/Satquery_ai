@@ -5,7 +5,7 @@ specialist and is never represented as executed by this module.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import hashlib
@@ -16,7 +16,16 @@ class TemporalPair:
     before_path: Path; after_path: Path; start_datetime: str|None=None; end_datetime: str|None=None
     def validate(self)->dict:
         import rasterio
-        if self.start_datetime and self.end_datetime and self.start_datetime >= self.end_datetime: raise ValueError("INVALID_TEMPORAL_PAIR")
+        def parse(value):
+            if value is None: return None
+            text=str(value)
+            if len(text)==4 and text.isdigit(): text += "-01-01"
+            try:
+                parsed=datetime.fromisoformat(text.replace("Z", "+00:00"))
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+            except ValueError as exc: raise ValueError("INVALID_TEMPORAL_PAIR: invalid acquisition datetime") from exc
+        start,end=parse(self.start_datetime),parse(self.end_datetime)
+        if start and end and start >= end: raise ValueError("INVALID_TEMPORAL_PAIR")
         with rasterio.open(self.before_path) as before, rasterio.open(self.after_path) as after:
             if not before.crs or not after.crs: raise ValueError("INVALID_TEMPORAL_PAIR: missing CRS")
             return {"before":{"crs":str(before.crs),"bounds":[float(x) for x in before.bounds],"resolution":list(before.res),"bands":before.count},"after":{"crs":str(after.crs),"bounds":[float(x) for x in after.bounds],"resolution":list(after.res),"bands":after.count}}
@@ -84,6 +93,13 @@ class TemporalChangeEngine:
             labels,count_objects=ndimage.label(mask); sizes=np.bincount(labels.ravel()); mask &= sizes[labels]>=minimum_component_pixels
             labels,count_objects=ndimage.label(mask)
             changed=int(mask.sum()); total=int(valid.sum()); transform=roi_transform; crs=str(before.crs); bounds=[float(x) for x in rasterio.transform.array_bounds(before_data.shape[1],before_data.shape[2],transform)]
+            warnings=[]
+            valid_coverage=valid.sum()*100/mask.size
+            if valid_coverage < 80: warnings.append("Valid comparison coverage is below 80%; interpret areas outside the effective common grid as unavailable.")
+            if before.count != after.count: warnings.append("The input band counts differ; only their shared leading bands were compared.")
+            if before.crs == after.crs:
+                resolution_ratio=max(abs(before.res[0])/max(abs(after.res[0]),1e-12),abs(after.res[0])/max(abs(before.res[0]),1e-12),abs(before.res[1])/max(abs(after.res[1]),1e-12),abs(after.res[1])/max(abs(before.res[1]),1e-12))
+                if resolution_ratio > 2: warnings.append("Input resolution differs by more than 2×; common-grid resampling may suppress or amplify small changes.")
             transition={}; semantic_mask=None
             if before_semantic is not None and after_semantic is not None:
                 if before_semantic.shape!=mask.shape or after_semantic.shape!=mask.shape: raise ValueError("INVALID_TEMPORAL_PAIR: semantic grids differ")
@@ -106,6 +122,6 @@ class TemporalChangeEngine:
             features.sort(key=lambda item:item["properties"]["area_m2"],reverse=True)
             changed_area=sum(f["properties"]["area_m2"] for f in features); dominant=max(transition,key=transition.get) if transition else None
             result_id="res_"+hashlib.sha256((str(pair.before_path)+str(pair.after_path)).encode()).hexdigest()[:20]
-            stats={"changed_area_m2":changed_area,"changed_area_ha":changed_area/10000,"changed_percentage":changed*100/total,"unchanged_percentage":(total-changed)*100/total,"valid_pixel_percentage":valid.sum()*100/mask.size,"area_method":"EPSG:6933_equal_area_polygon_area"}
+            stats={"changed_area_m2":changed_area,"changed_area_ha":changed_area/10000,"changed_percentage":changed*100/total,"unchanged_percentage":(total-changed)*100/total,"valid_pixel_percentage":valid_coverage,"area_method":"EPSG:6933_equal_area_polygon_area"}
             description=f"Between {pair.start_datetime or 'the first observation'} and {pair.end_datetime or 'the second observation'}, {stats['changed_area_ha']:.4f} hectares ({stats['changed_percentage']:.2f}% of valid effective-ROI pixels) were identified as changed using fused deterministic spectral evidence."
-            return {"task":"temporal_change_analysis","status":"EXPERIMENTAL","result_id":result_id,"pair":metadata,"effective_roi":{"crs":crs,"bounds":bounds,"transform":[float(x) for x in transform],"width":before_data.shape[2],"height":before_data.shape[1]},"statistics":stats,"threshold":{"method":"otsu_on_fused_spectral_score","value":threshold,"distribution":{"median":float(np.median(score[valid])),"p95":float(np.percentile(score[valid],95))}},"features":{"spectral_magnitude":True,"normalized_spectral_difference":True,"semantic_transition":semantic_mask is not None,"learned_detector":"NOT_EXECUTED"},"transition_matrix":transition,"dominant_transition":dominant,"change_polygons":{"type":"FeatureCollection","features":features},"largest_change_direction":features[0]["properties"]["direction"] if features else "none","description":description,"change_score":"deterministic_fused_feature_score","model_confidence":None,"registration":{"method":"metadata_common_grid_reprojection","status":"passed","estimated_shift_pixels":None},"provenance":{"before_hash":_hash(pair.before_path),"after_hash":_hash(pair.after_path),"algorithm":self.VERSION,"resampling":"bilinear_continuous_features","categorical_resampling":"nearest_required","time_range":[pair.start_datetime,pair.end_datetime]}}
+            return {"task":"temporal_change_analysis","status":"EXPERIMENTAL","result_id":result_id,"pair":metadata,"effective_roi":{"crs":crs,"bounds":bounds,"transform":[float(x) for x in transform],"width":before_data.shape[2],"height":before_data.shape[1]},"statistics":stats,"threshold":{"method":"otsu_on_fused_spectral_score","value":threshold,"distribution":{"median":float(np.median(score[valid])),"p95":float(np.percentile(score[valid],95))}},"features":{"spectral_magnitude":True,"normalized_spectral_difference":True,"semantic_transition":semantic_mask is not None,"learned_detector":"NOT_EXECUTED"},"transition_matrix":transition,"dominant_transition":dominant,"change_polygons":{"type":"FeatureCollection","features":features},"largest_change_direction":features[0]["properties"]["direction"] if features else "none","description":description,"change_score":"deterministic_fused_feature_score","model_confidence":None,"registration":{"method":"metadata_common_grid_reprojection","status":"passed","estimated_shift_pixels":None,"quality_warnings":warnings},"provenance":{"before_hash":_hash(pair.before_path),"after_hash":_hash(pair.after_path),"algorithm":self.VERSION,"resampling":"bilinear_continuous_features","categorical_resampling":"nearest_required","time_range":[pair.start_datetime,pair.end_datetime]}}

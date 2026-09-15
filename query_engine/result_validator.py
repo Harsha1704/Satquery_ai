@@ -38,3 +38,14 @@ def validate_temporal_result(result: dict) -> None:
     for feature in result["change_polygons"].get("features", []):
         if feature.get("type") != "Feature" or not feature.get("geometry"):
             raise QueryError("result_validation_failed", "Invalid change polygon.", 500)
+        properties = feature.get("properties") or {}
+        if properties.get("geometry_crs") != "EPSG:4326" or not properties.get("source_ids"):
+            raise QueryError("result_validation_failed", "Change polygons require WGS84 geometry and source provenance.", 500)
+        def coordinates(value):
+            if isinstance(value, (list, tuple)) and len(value) >= 2 and all(isinstance(x, (int, float)) for x in value[:2]):
+                yield value
+            elif isinstance(value, (list, tuple)):
+                for nested in value: yield from coordinates(nested)
+        for point in coordinates(feature["geometry"].get("coordinates")):
+            if not all(math.isfinite(float(x)) for x in point[:2]) or not -180 <= point[0] <= 180 or not -90 <= point[1] <= 90:
+                raise QueryError("result_validation_failed", "Change polygon coordinates must be finite WGS84 positions.", 500)

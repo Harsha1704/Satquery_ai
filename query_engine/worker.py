@@ -95,7 +95,7 @@ def run(payload):
                 ],
                 "temporal_result": result,
                 "evidence": [str(artifact)],
-                "limitations": ["Learned change inference was not executed; this result uses deterministic spectral change fusion."],
+                "limitations": ["Learned change inference was not executed; this result uses deterministic spectral change fusion.", *result["registration"].get("quality_warnings", [])],
             })
         except ValueError as exc:
             code = str(exc).split(":", 1)[0]
