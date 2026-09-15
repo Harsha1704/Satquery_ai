@@ -1837,221 +1837,6 @@ class SatQueryOrchestrator:
     # ai/router/orchestrator.py
 # REPLACE ONLY _execute_change_detection() WITH THIS VERSION
 
-
-    # === SATQUERY BI-TEMPORAL VISUAL CHANGE V1 ===
-
-    @staticmethod
-    def _assess_visual_pair(
-        before_path: str,
-        after_path: str,
-    ) -> Dict[str, Any]:
-        # Scene-level RGB difference metrics. These complement ChangeFormer;
-        # they are not semantic land-cover labels by themselves.
-        from PIL import Image
-
-        with Image.open(before_path) as before_image:
-            before_rgb = np.asarray(
-                before_image.convert("RGB"),
-                dtype=np.float32,
-            )
-
-        with Image.open(after_path) as after_image:
-            after_rgb = np.asarray(
-                after_image.convert("RGB"),
-                dtype=np.float32,
-            )
-
-        if before_rgb.shape != after_rgb.shape:
-            return {
-                "available": False,
-                "reason": (
-                    "Visual-difference metrics require aligned images "
-                    "with identical dimensions."
-                ),
-            }
-
-        absolute_difference = np.abs(
-            after_rgb - before_rgb
-        )
-
-        per_pixel_difference = np.mean(
-            absolute_difference,
-            axis=2,
-        )
-
-        mean_absolute_difference = float(
-            np.mean(
-                absolute_difference
-            )
-        )
-
-        changed_gt_10 = float(
-            np.mean(
-                per_pixel_difference > 10.0
-            )
-            * 100.0
-        )
-
-        changed_gt_20 = float(
-            np.mean(
-                per_pixel_difference > 20.0
-            )
-            * 100.0
-        )
-
-        changed_gt_30 = float(
-            np.mean(
-                per_pixel_difference > 30.0
-            )
-            * 100.0
-        )
-
-        if (
-            changed_gt_20 >= 25.0
-            or mean_absolute_difference >= 20.0
-        ):
-            level = "significant"
-        elif (
-            changed_gt_20 >= 10.0
-            or mean_absolute_difference >= 10.0
-        ):
-            level = "meaningful"
-        elif (
-            changed_gt_20 >= 3.0
-            or mean_absolute_difference >= 5.0
-        ):
-            level = "limited"
-        else:
-            level = "low"
-
-        return {
-            "available": True,
-            "level": level,
-            "mean_absolute_rgb_difference": round(
-                mean_absolute_difference,
-                4,
-            ),
-            "pixels_difference_gt_10_pct": round(
-                changed_gt_10,
-                4,
-            ),
-            "pixels_difference_gt_20_pct": round(
-                changed_gt_20,
-                4,
-            ),
-            "pixels_difference_gt_30_pct": round(
-                changed_gt_30,
-                4,
-            ),
-            "note": (
-                "RGB scene differences can include real surface change, "
-                "seasonality, illumination, atmosphere, compositing, and "
-                "small registration effects. They are not a semantic "
-                "land-cover label by themselves."
-            ),
-        }
-
-    @staticmethod
-    def _build_combined_change_answer(
-        visual_assessment: Dict[str, Any],
-        changed_percentage: float,
-        before_year: Optional[int],
-        after_year: Optional[int],
-        fallback_answer: str,
-    ) -> str:
-        if before_year is not None and after_year is not None:
-            period = (
-                f"between {before_year} and {after_year}"
-            )
-        else:
-            period = (
-                "between the before and after images"
-            )
-
-        visual_available = bool(
-            visual_assessment.get("available")
-        )
-
-        if not visual_available:
-            return fallback_answer
-
-        level = str(
-            visual_assessment.get(
-                "level",
-                "low",
-            )
-        )
-
-        pct20 = float(
-            visual_assessment.get(
-                "pixels_difference_gt_20_pct",
-                0.0,
-            )
-        )
-
-        mean_diff = float(
-            visual_assessment.get(
-                "mean_absolute_rgb_difference",
-                0.0,
-            )
-        )
-
-        if level == "significant":
-            visual_text = (
-                f"Substantial visual differences are present {period}. "
-                f"About {pct20:.1f}% of aligned pixels have an average "
-                f"RGB difference greater than 20 intensity levels, with "
-                f"a mean absolute RGB difference of {mean_diff:.1f}/255."
-            )
-        elif level == "meaningful":
-            visual_text = (
-                f"Meaningful visual differences are present {period}. "
-                f"About {pct20:.1f}% of aligned pixels have an average "
-                f"RGB difference greater than 20 intensity levels, with "
-                f"a mean absolute RGB difference of {mean_diff:.1f}/255."
-            )
-        elif level == "limited":
-            visual_text = (
-                f"Limited visual differences are present {period}. "
-                f"About {pct20:.1f}% of aligned pixels have an average "
-                f"RGB difference greater than 20 intensity levels."
-            )
-        else:
-            visual_text = (
-                f"The aligned scenes show only small RGB differences "
-                f"{period}."
-            )
-
-        if changed_percentage < 0.01:
-            structural_text = (
-                "ChangeFormerV6 detected no confident LEVIR-style "
-                "structural/building change (0.00%)."
-            )
-        else:
-            structural_text = (
-                "ChangeFormerV6 detected LEVIR-style structural/building "
-                f"change across approximately {changed_percentage:.2f}% "
-                "of the analyzed area."
-            )
-
-        limitation_text = (
-            "Because ChangeFormerV6 was trained on high-resolution "
-            "LEVIR-CD building imagery, its structural result should not "
-            "override scene-level differences in medium-resolution "
-            "Sentinel/Landsat composites. RGB differences can also be "
-            "caused by seasonality, illumination, atmosphere, compositing, "
-            "or small registration effects, so they should not be treated "
-            "as a semantic land-cover transition by themselves."
-        )
-
-        return (
-            f"{visual_text} "
-            f"{structural_text} "
-            f"{limitation_text}"
-        )
-
-    # === END SATQUERY BI-TEMPORAL VISUAL CHANGE V1 ===
-
     def _execute_change_detection(
         self,
         query: str,
@@ -2192,26 +1977,6 @@ class SatQueryOrchestrator:
                 )
             )
 
-            visual_assessment = (
-                self._assess_visual_pair(
-                    before_path=before_path,
-                    after_path=after_path,
-                )
-            )
-
-            combined_answer = (
-                self._build_combined_change_answer(
-                    visual_assessment=visual_assessment,
-                    changed_percentage=changed_percentage,
-                    before_year=before_year,
-                    after_year=after_year,
-                    fallback_answer=vqa_result.get(
-                        "answer",
-                        description,
-                    ),
-                )
-            )
-
             if changed_percentage < 0.01:
                 confidence_label = "very_low_change"
             elif changed_percentage < 1.0:
@@ -2289,16 +2054,11 @@ class SatQueryOrchestrator:
                 "vqa": self._make_json_safe(
                     vqa_result
                 ),
-                "answer": combined_answer,
-                "description": combined_answer,
-                "structural_change_percentage": (
-                    changed_percentage
+                "answer": vqa_result.get(
+                    "answer",
+                    description,
                 ),
-                "visual_change_assessment": (
-                    self._make_json_safe(
-                        visual_assessment
-                    )
-                ),
+                "description": description,
                 "detector_metadata": self._make_json_safe(
                     detection.metadata
                     if hasattr(detection, "metadata")
@@ -2315,20 +2075,6 @@ class SatQueryOrchestrator:
                     "before_year": before_year,
                     "after_year": after_year,
                     "changed_percentage": changed_percentage,
-                    "structural_change_percentage": changed_percentage,
-                    "visual_change_level": visual_assessment.get(
-                        "level"
-                    ),
-                    "visual_mean_absolute_rgb_difference": (
-                        visual_assessment.get(
-                            "mean_absolute_rgb_difference"
-                        )
-                    ),
-                    "visual_pixels_difference_gt_20_pct": (
-                        visual_assessment.get(
-                            "pixels_difference_gt_20_pct"
-                        )
-                    ),
                     "change_level": confidence_label,
                     "question_type": vqa_result.get(
                         "question_type"
