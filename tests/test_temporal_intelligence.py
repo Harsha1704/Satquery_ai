@@ -13,10 +13,10 @@ from query_engine.worker import run
 configure_raster_runtime()
 
 class TemporalIntelligenceTests(unittest.TestCase):
- def _pair(self, directory, *, shifted=False):
+ def _pair(self, directory, *, shifted=False, after_resolution=.001):
   before=np.full((1,40,40),.2,dtype="float32"); after=before.copy();after[:,12:28,20:36]=.8
   transform=from_origin(77,13,.001,.001); paths=[]
-  for name,data,trans in (("before.tif",before,transform),("after.tif",after,from_origin(77.01 if shifted else 77,13,.001,.001))):
+  for name,data,trans in (("before.tif",before,transform),("after.tif",after,from_origin(77.01 if shifted else 77,13,after_resolution,after_resolution))):
    path=Path(directory)/name
    with rasterio.open(path,"w",driver="GTiff",width=40,height=40,count=1,dtype="float32",crs="EPSG:4326",transform=trans,nodata=-9999) as dst:dst.write(data)
    paths.append(path)
@@ -37,6 +37,10 @@ class TemporalIntelligenceTests(unittest.TestCase):
    before,after=self._pair(directory,shifted=True);result=TemporalChangeEngine().analyze(TemporalPair(before,after),minimum_component_pixels=4)
   self.assertEqual(result["registration"]["method"],"metadata_common_grid_reprojection")
   self.assertLess(result["effective_roi"]["width"],40)
+ def test_resolution_mismatch_is_recorded_as_a_quality_warning(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory,after_resolution=.004);result=TemporalChangeEngine().analyze(TemporalPair(before,after),minimum_component_pixels=1)
+  self.assertTrue(any("resolution differs" in warning for warning in result["registration"]["quality_warnings"]))
  def test_temporal_pair_rejects_reverse_dates(self):
   with TemporaryDirectory() as directory:
    before,after=self._pair(directory)
