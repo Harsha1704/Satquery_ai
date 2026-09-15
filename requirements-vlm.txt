@@ -1,0 +1,3 @@
+# Optional GPU training dependencies. Install only on a CUDA training machine.
+peft>=0.13,<1
+accelerate>=1,<2

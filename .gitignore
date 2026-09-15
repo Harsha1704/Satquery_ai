@@ -6,7 +6,14 @@
 
 # Downloaded model weights / checkpoints
 /checkpoints/
+/models/
+/runs/
+/wandb/
+/tensorboard/
 /external/ChangeFormer/checkpoints/
+# Third-party ChangeFormer clone (own Git history, datasets, samples, and
+# checkpoints). SatQuery integrations live in first-party packages instead.
+/external/ChangeFormer/
 
 # Model / package caches
 .cache/

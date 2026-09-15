@@ -1,0 +1,40 @@
+# Reproducible configuration. Paths resolve below SATQUERY_DATA_ROOT, never a laptop path.
+base_model: Salesforce/blip-vqa-base
+base_revision: main
+adaptation_method: lora
+adapter:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: [query, value]
+datasets:
+  domain_adaptation:
+    name: BigEarthNet.txt
+    version: "2026"
+    task: image_text_contrastive_adaptation
+    license: CDLA-Permissive-1.0
+    manifest: manifests/bigearthnet_txt_train.jsonl
+  vqa:
+    name: RSVQA
+    version: null
+    task: visual_question_answering
+    manifest: manifests/rsvqa_test.jsonl
+  grounding:
+    name: VRSBench
+    version: null
+    task: phrase_grounding
+    manifest: manifests/vrsbench_test.jsonl
+training:
+  image_size: 384
+  batch_size: 2
+  gradient_accumulation: 8
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  epochs: 5
+  warmup_ratio: 0.05
+  seed: 42
+  mixed_precision: fp16
+  gradient_clip_norm: 1.0
+  cuda_required: true
+  checkpoint_dir: checkpoints/remote_sensing_vlm
+  early_stopping_patience: 2
