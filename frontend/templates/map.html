@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        SatQuery AI | Geospatial Workspace
+    </title>
+
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com"
+    >
+
+    <link
+        rel="preconnect"
+        href="https://fonts.gstatic.com"
+        crossorigin
+    >
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+    >
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='css/map.css') }}"
+    >
+
+</head>
+
+
+<body>
+
+
+<div class="map-app">
+
+
+    <header class="map-header">
+
+
+        <a
+            class="map-brand"
+            href="/"
+        >
+
+            <div class="logo">
+                🛰️
+            </div>
+
+            <div>
+
+                <strong>
+                    SatQuery<span>AI</span>
+                </strong>
+
+                <small>
+                    Geospatial Intelligence Workspace
+                </small>
+
+            </div>
+
+        </a>
+
+
+        <nav>
+
+            <a
+                href="/"
+                class="nav-link"
+            >
+                ◉ Analyze
+            </a>
+
+            <a
+                href="/map-view"
+                class="nav-link active"
+            >
+                ◈ Map View
+            </a>
+
+            <a
+                href="/"
+                class="nav-link"
+            >
+                ◫ Datasets
+            </a>
+
+            <a
+                href="/"
+                class="nav-link"
+            >
+                ◇ Model Hub
+            </a>
+
+            <a
+                href="/"
+                class="nav-link"
+            >
+                ▣ Reports
+            </a>
+
+        </nav>
+
+
+        <div class="profile">
+
+            <div class="avatar">
+                H
+            </div>
+
+            <strong>
+                Harsha
+            </strong>
+
+        </div>
+
+
+    </header>
+
+
+
+    <main class="map-grid">
+
+
+        <!-- ================================================= -->
+        <!-- LEFT -->
+        <!-- ================================================= -->
+
+        <aside class="map-sidebar">
+
+
+            <div class="side-title">
+
+                <span>
+                    GEOSPATIAL ANALYSIS
+                </span>
+
+                <h2>
+                    Map View
+                </h2>
+
+            </div>
+
+
+            <section class="map-card">
+
+                <div class="card-title">
+                    Dataset / Analysis
+                </div>
+
+                <select
+                    id="analysisSelect"
+                    class="analysis-select"
+                >
+                    <option value="">
+                        No GeoTIFF analysis available
+                    </option>
+                </select>
+
+                <div
+                    id="analysisHint"
+                    class="analysis-hint"
+                >
+                    Run a GeoTIFF analysis first.
+                </div>
+
+            </section>
+
+
+            <section class="map-card" id="temporalCard">
+
+                <div class="card-title">
+                    Historical Comparison
+                </div>
+
+                <div class="selection-copy">
+
+                    Draw any area on the map, pick two years, and ask
+                    what changed. Imagery is pulled live from Google
+                    Earth Engine &mdash; no upload needed. Keep the
+                    area small: up to ~5&times;5&nbsp;km for years
+                    2017+ (Sentinel-2), up to ~10&times;10&nbsp;km for
+                    older years (Landsat).
+
+                </div>
+
+                <button
+                    id="temporalSelectAreaBtn"
+                    class="selection-btn primary"
+                    type="button"
+                >
+                    ⛶ Draw Area
+                </button>
+
+                <div class="selection-actions">
+
+                    <button
+                        id="temporalFixAreaBtn"
+                        class="selection-btn"
+                        type="button"
+                        disabled
+                    >
+                        ✓ Fix Area
+                    </button>
+
+                    <button
+                        id="temporalClearAreaBtn"
+                        class="selection-btn"
+                        type="button"
+                        disabled
+                    >
+                        × Clear
+                    </button>
+
+                </div>
+
+                <div
+                    id="temporalSelectionStatus"
+                    class="selection-status"
+                >
+                    No area selected.
+                </div>
+
+                <div class="year-range-row">
+
+                    <label>
+                        Before
+                        <select id="temporalBeforeYear"></select>
+                    </label>
+
+                    <label>
+                        After
+                        <select id="temporalAfterYear"></select>
+                    </label>
+
+                </div>
+
+                <textarea
+                    id="temporalQueryInput"
+                    maxlength="500"
+                    placeholder="Example: What changed here between 2010 and 2026?"
+                    disabled
+                ></textarea>
+
+                <button
+                    id="temporalAnalyzeBtn"
+                    class="selection-btn primary"
+                    type="button"
+                    disabled
+                >
+                    ➤ Compare Years
+                </button>
+
+                <div
+                    id="temporalHint"
+                    class="analysis-hint"
+                >
+                    Draw and fix an area above, then compare two years.
+                </div>
+
+            </section>
+
+
+            <section class="map-card">
+
+                <div class="card-title">
+                    Select Location
+                </div>
+
+                <div class="selection-copy">
+
+                    Pan and zoom to the required location,
+                    then select an area on the map.
+
+                </div>
+
+
+                <button
+                    id="selectAreaBtn"
+                    class="selection-btn primary"
+                    type="button"
+                >
+                    ⛶ Select Area
+                </button>
+
+
+                <div class="selection-actions">
+
+                    <button
+                        id="fixAreaBtn"
+                        class="selection-btn"
+                        type="button"
+                        disabled
+                    >
+                        ✓ Fix Area
+                    </button>
+
+                    <button
+                        id="clearAreaBtn"
+                        class="selection-btn"
+                        type="button"
+                        disabled
+                    >
+                        × Clear
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="selectionStatus"
+                    class="selection-status"
+                >
+                    No area selected.
+                </div>
+
+            </section>
+
+
+            <section class="map-card">
+
+                <div class="card-title">
+                    Fixed Region
+                </div>
+
+                <div
+                    id="selectedBounds"
+                    class="metadata-list"
+                >
+
+                    <div class="empty">
+                        Fix an area to continue.
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <section class="map-card">
+
+                <div class="card-title">
+                    Dataset Information
+                </div>
+
+                <div
+                    id="datasetMetadata"
+                    class="metadata-list"
+                >
+
+                    <div class="empty">
+                        Select a GeoTIFF analysis.
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <section class="map-card">
+
+                <div class="card-title">
+                    Layers
+                </div>
+
+                <div
+                    id="layerList"
+                    class="layer-list"
+                >
+
+                    <div class="empty">
+                        No layers available.
+                    </div>
+
+                </div>
+
+            </section>
+
+
+        </aside>
+
+
+
+        <!-- ================================================= -->
+        <!-- CENTER -->
+        <!-- ================================================= -->
+
+        <section class="map-workspace">
+
+
+            <div class="map-toolbar">
+
+
+                <div>
+
+                    <span class="toolbar-label">
+                        SATQUERY GEOSPATIAL VIEWER
+                    </span>
+
+                    <h1>
+                        Select. Ask. Analyze.
+                    </h1>
+
+                </div>
+
+
+                <div class="toolbar-actions">
+
+                    <button
+                        id="fitBoundsBtn"
+                        type="button"
+                        disabled
+                    >
+                        ⛶ Fit Dataset
+                    </button>
+
+                    <button
+                        id="toggleOverlayBtn"
+                        type="button"
+                        disabled
+                    >
+                        ◫ Toggle Result
+                    </button>
+
+                </div>
+
+
+            </div>
+
+
+
+            <div class="map-container">
+
+
+                <div id="map"></div>
+
+
+                <div
+                    id="mapEmptyState"
+                    class="map-empty-state"
+                >
+
+                    <div>
+                        🛰️
+                    </div>
+
+                    <strong>
+                        Select a GeoTIFF analysis
+                    </strong>
+
+                    <span>
+                        The satellite raster will appear here.
+                    </span>
+
+                </div>
+
+
+                <div class="map-status">
+
+                    <div>
+
+                        <span>
+                            Latitude
+                        </span>
+
+                        <strong id="cursorLat">
+                            —
+                        </strong>
+
+                    </div>
+
+                    <div>
+
+                        <span>
+                            Longitude
+                        </span>
+
+                        <strong id="cursorLng">
+                            —
+                        </strong>
+
+                    </div>
+
+                    <div>
+
+                        <span>
+                            Zoom
+                        </span>
+
+                        <strong id="zoomLevel">
+                            —
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+            </div>
+
+
+
+            <!-- ================================================= -->
+            <!-- QUERY BAR -->
+            <!-- ================================================= -->
+
+            <section class="map-query-panel">
+
+
+                <div class="query-title">
+
+                    <div>
+
+                        <span>
+                            ASK SATQUERY ABOUT THE FIXED AREA
+                        </span>
+
+                        <strong id="roiReadyLabel">
+                            Fix an area before analysis
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="map-query-row">
+
+
+                    <textarea
+                        id="mapQueryInput"
+                        maxlength="500"
+                        placeholder="Example: Calculate NDVI for this selected area"
+                        disabled
+                    ></textarea>
+
+
+                    <button
+                        id="analyzeAreaBtn"
+                        type="button"
+                        disabled
+                    >
+                        ➤
+                    </button>
+
+
+                </div>
+
+
+                <div class="map-query-examples">
+
+                    <button
+                        type="button"
+                        data-map-query="Calculate NDVI for this selected area"
+                    >
+                        Calculate NDVI
+                    </button>
+
+                    <button
+                        type="button"
+                        data-map-query="What is visible in this selected area?"
+                    >
+                        Describe area
+                    </button>
+
+                    <button
+                        type="button"
+                        data-map-query="Show buildings in this selected area"
+                    >
+                        Find buildings
+                    </button>
+
+                    <button
+                        type="button"
+                        data-map-query="Analyze this selected area"
+                    >
+                        Analyze area
+                    </button>
+
+                </div>
+
+
+            </section>
+
+
+        </section>
+
+
+
+        <!-- ================================================= -->
+        <!-- RIGHT -->
+        <!-- ================================================= -->
+
+        <aside class="info-panel">
+
+
+            <section class="info-card">
+
+                <div class="card-heading">
+                    <h2>
+                        Spatial Metadata
+                    </h2>
+                </div>
+
+                <div id="spatialMetadata">
+
+                    <div class="empty">
+                        No metadata loaded.
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <section class="info-card">
+
+                <div class="card-heading">
+                    <h2>
+                        Analysis Result
+                    </h2>
+                </div>
+
+
+                <div class="answer-box">
+
+                    <span>
+                        Question
+                    </span>
+
+                    <p id="mapQuestion">
+                        —
+                    </p>
+
+                </div>
+
+
+                <div class="answer-box">
+
+                    <span>
+                        Answer
+                    </span>
+
+                    <p id="mapAnswer">
+                        Fix an area and ask a question.
+                    </p>
+
+                </div>
+
+
+                <div class="answer-box">
+
+                    <span>
+                        Model
+                    </span>
+
+                    <p id="mapModel">
+                        —
+                    </p>
+
+                </div>
+
+
+                <div class="answer-box">
+
+                    <span>
+                        Confidence
+                    </span>
+
+                    <p id="mapConfidence">
+                        —
+                    </p>
+
+                </div>
+
+
+                <div class="answer-box">
+
+                    <span>
+                        Task
+                    </span>
+
+                    <p id="mapTask">
+                        —
+                    </p>
+
+                </div>
+
+            </section>
+
+
+            <section class="info-card">
+
+                <div class="card-heading">
+
+                    <h2>
+                        Report
+                    </h2>
+
+                </div>
+
+
+                <button
+                    id="generateReportBtn"
+                    class="report-button"
+                    type="button"
+                    disabled
+                >
+                    ▣ Generate Report
+                </button>
+
+
+                <div
+                    id="reportStatus"
+                    class="report-status"
+                >
+                    Run a selected-area analysis first.
+                </div>
+
+            </section>
+
+
+        </aside>
+
+
+    </main>
+
+
+</div>
+
+
+
+<div
+    id="mapLoading"
+    class="map-loading hidden"
+>
+
+    <div>
+
+        <div class="map-loader"></div>
+
+        <strong>
+            Analyzing selected region
+        </strong>
+
+        <span>
+            Cropping geospatial data and running SatQuery AI...
+        </span>
+
+    </div>
+
+</div>
+
+
+
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
+
+<script
+    src="{{ url_for('static', filename='js/map.js') }}"
+></script>
+
+
+</body>
+
+</html>

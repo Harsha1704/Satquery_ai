@@ -1,0 +1,6 @@
+[submodule "external/ChangeFormer"]
+	path = external/ChangeFormer
+	url = https://github.com/wgcban/ChangeFormer.git
+[submodule "external/bigearthnet-mini"]
+	path = external/bigearthnet-mini
+	url = https://github.com/jerpint/bigearthnet.git

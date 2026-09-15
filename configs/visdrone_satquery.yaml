@@ -1,0 +1,82 @@
+# VisDrone 2019 DET, converted to the Ultralytics YOLO format.
+#
+# The download block is intentionally kept here so the training command can
+# bootstrap the official train, validation, and test-dev splits when the
+# dataset is absent. It needs roughly 2 GB of disk space and network access.
+path: datasets/VisDrone
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: pedestrian
+  1: people
+  2: bicycle
+  3: car
+  4: van
+  5: truck
+  6: tricycle
+  7: awning-tricycle
+  8: bus
+  9: motor
+
+download: |
+  import shutil
+  from pathlib import Path
+
+  from PIL import Image
+  from ultralytics.utils import ASSETS_URL, TQDM
+  from ultralytics.utils.downloads import download
+
+
+  def visdrone_to_yolo(dataset_root, source_name, split):
+      source = dataset_root / source_name
+      destination_images = dataset_root / "images" / split
+      destination_labels = dataset_root / "labels" / split
+      destination_images.mkdir(parents=True, exist_ok=True)
+      destination_labels.mkdir(parents=True, exist_ok=True)
+
+      for image in (source / "images").glob("*.jpg"):
+          image.rename(destination_images / image.name)
+
+      for annotation in TQDM(
+          (source / "annotations").glob("*.txt"),
+          desc=f"Converting VisDrone {split}",
+      ):
+          width, height = Image.open(
+              destination_images / annotation.with_suffix(".jpg").name
+          ).size
+          lines = []
+          for row in annotation.read_text(encoding="utf-8").splitlines():
+              x, y, box_width, box_height, score, category, *_ = row.split(",")
+              if score == "0":
+                  continue
+              x, y, box_width, box_height = map(float, (x, y, box_width, box_height))
+              class_id = int(category) - 1
+              lines.append(
+                  f"{class_id} {(x + box_width / 2) / width:.6f} "
+                  f"{(y + box_height / 2) / height:.6f} "
+                  f"{box_width / width:.6f} {box_height / height:.6f}\\n"
+              )
+          (destination_labels / annotation.name).write_text(
+              "".join(lines), encoding="utf-8"
+          )
+
+
+  dataset_root = Path(yaml["path"])
+  download(
+      [
+          f"{ASSETS_URL}/VisDrone2019-DET-train.zip",
+          f"{ASSETS_URL}/VisDrone2019-DET-val.zip",
+          f"{ASSETS_URL}/VisDrone2019-DET-test-dev.zip",
+      ],
+      dir=dataset_root,
+      threads=4,
+  )
+  for source_name, split in {
+      "VisDrone2019-DET-train": "train",
+      "VisDrone2019-DET-val": "val",
+      "VisDrone2019-DET-test-dev": "test",
+  }.items():
+      visdrone_to_yolo(dataset_root, source_name, split)
+      shutil.rmtree(dataset_root / source_name)

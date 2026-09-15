@@ -1,0 +1,135 @@
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ================================
+# Virtual Environments
+# ================================
+.venv/
+.venv-ml/
+venv/
+env/
+ENV/
+
+# ================================
+# Environment / Secrets
+# ================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ================================
+# Jupyter
+# ================================
+.ipynb_checkpoints/
+
+# ================================
+# VS Code
+# ================================
+.vscode/
+*.code-workspace
+
+# ================================
+# ML Models / Checkpoints
+# ================================
+checkpoints/
+models/
+*.h5
+*.hdf5
+*.keras
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.bin
+
+# ================================
+# Datasets
+# ================================
+datasets/
+data/
+*.csv
+*.parquet
+*.tif
+*.tiff
+*.jp2
+*.nc
+*.hdf
+*.h5
+
+# ================================
+# Generated Outputs
+# ================================
+outputs/
+results/
+runs/
+logs/
+*.log
+
+# ================================
+# Experiments
+# ================================
+experiments/
+
+# ================================
+# Temporary / Cache Files
+# ================================
+*.tmp
+*.temp
+*.cache
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# ================================
+# Large Archives
+# ================================
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# ================================
+# Node / Frontend
+# ================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build directories
+dist/
+build/
+.next/
+.vite/
+
+# ================================
+# Coverage / Testing
+# ================================
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# ================================
+# OS Files
+# ================================
+*.lnk
+desktop.ini
+
+
+# ================================
+# Frontend User Uploads
+# ================================
+frontend/uploads/
