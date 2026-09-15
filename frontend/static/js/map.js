@@ -18,6 +18,9 @@ const PREVIEW_FILL = "sq-preview-fill";
 const PREVIEW_LINE = "sq-preview-line";
 const ANALYSIS_SOURCE = "sq-analysis-evidence-source";
 const ANALYSIS_LAYER = "sq-analysis-evidence-layer";
+const TEMPORAL_CHANGE_SOURCE = "sq-temporal-change-polygons";
+const TEMPORAL_CHANGE_FILL = "sq-temporal-change-fill";
+const TEMPORAL_CHANGE_LINE = "sq-temporal-change-line";
 const EXECUTION_STEPS = ["imagery", "preprocess", "analysis", "compare", "evidence", "statistics", "report"];
 
 let map;
@@ -574,6 +577,9 @@ function clearAnalysisOverlay() {
   if (!map) return;
   if (map.getLayer(ANALYSIS_LAYER)) map.removeLayer(ANALYSIS_LAYER);
   if (map.getSource(ANALYSIS_SOURCE)) map.removeSource(ANALYSIS_SOURCE);
+  if (map.getLayer(TEMPORAL_CHANGE_LINE)) map.removeLayer(TEMPORAL_CHANGE_LINE);
+  if (map.getLayer(TEMPORAL_CHANGE_FILL)) map.removeLayer(TEMPORAL_CHANGE_FILL);
+  if (map.getSource(TEMPORAL_CHANGE_SOURCE)) map.removeSource(TEMPORAL_CHANGE_SOURCE);
   overlayArtifact = null;
 }
 
@@ -926,6 +932,25 @@ function showEvidenceOnMap(job, artifact) {
   renderAnalysisLegend(job, artifact);
 }
 
+function showTemporalChangePolygons(job) {
+  const temporal = job?.result?.statistics?.temporal;
+  const collection = temporal?.change_polygons;
+  if (!collection || collection.type !== "FeatureCollection" || !Array.isArray(collection.features) || !map?.isStyleLoaded()) return false;
+  clearAnalysisOverlay();
+  map.addSource(TEMPORAL_CHANGE_SOURCE, {type:"geojson", data:collection});
+  map.addLayer({id:TEMPORAL_CHANGE_FILL,type:"fill",source:TEMPORAL_CHANGE_SOURCE,paint:{"fill-color":"#f97316","fill-opacity":.28}});
+  map.addLayer({id:TEMPORAL_CHANGE_LINE,type:"line",source:TEMPORAL_CHANGE_SOURCE,paint:{"line-color":"#fed7aa","line-width":2.2,"line-opacity":.95}});
+  overlayArtifact = "temporal_change_polygons";
+  els.analysisLayerToggle.checked = true;
+  els.activeLayerLabel.textContent = "Detected temporal change polygons";
+  els.mapHint.textContent = "DETECTED TEMPORAL CHANGE: map coordinates are transformed from the common analysis grid to WGS84.";
+  if (collection.features.length) {
+    const bounds = collection.features.map(bboxOf).filter(Boolean).reduce((all, box) => all ? [Math.min(all[0],box[0]),Math.min(all[1],box[1]),Math.max(all[2],box[2]),Math.max(all[3],box[3])] : box, null);
+    if (bounds) map.fitBounds([[bounds[0],bounds[1]],[bounds[2],bounds[3]]], {padding:mapPadding(), maxZoom:15, duration:650});
+  }
+  return true;
+}
+
 
 function headlineMetrics(job, profile) {
   const layer = taskLayerStats(job);
@@ -1083,7 +1108,7 @@ function renderAnalysisResult(payload) {
 
   saveAnalysisHistory(job);
   const preferred = preferredEvidence(job);
-  if (preferred) showEvidenceOnMap(job, preferred);
+  if (!showTemporalChangePolygons(job) && preferred) showEvidenceOnMap(job, preferred);
 }
 
 function renderFailure(payload, fallbackMessage) {

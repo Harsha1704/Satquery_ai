@@ -51,7 +51,7 @@ class TemporalChangeEngine:
         import rasterio
         from rasterio.enums import Resampling
         from rasterio.features import shapes
-        from rasterio.warp import reproject, transform_bounds
+        from rasterio.warp import reproject, transform_bounds, transform_geom
         from rasterio.windows import from_bounds
         from scipy import ndimage
         metadata=pair.validate()
@@ -75,10 +75,14 @@ class TemporalChangeEngine:
             if valid.sum()==0: raise ValueError("INSUFFICIENT_VALID_DATA")
             spectral=np.mean(np.abs(after_data-before_data),axis=0); normalized=spectral/(np.mean(np.abs(before_data),axis=0)+1e-6)
             # Robust fusion: both magnitude and normalized evidence contribute equally; no probability claim.
-            score=(spectral/np.nanpercentile(spectral[valid],95)+normalized/np.nanpercentile(normalized[valid],95))/2
-            threshold=_otsu(score[valid]); mask=(score>=threshold)&valid
+            spectral_scale=np.nanpercentile(spectral[valid],95); normalized_scale=np.nanpercentile(normalized[valid],95)
+            score=(spectral/max(spectral_scale,1e-9)+normalized/max(normalized_scale,1e-9))/2
+            score_range=float(np.ptp(score[valid]))
+            threshold=_otsu(score[valid]) if score_range > 1e-9 else None
+            mask=((score>=threshold)&valid) if threshold is not None else np.zeros_like(valid, dtype=bool)
             mask=ndimage.binary_opening(mask);mask=ndimage.binary_closing(mask)
             labels,count_objects=ndimage.label(mask); sizes=np.bincount(labels.ravel()); mask &= sizes[labels]>=minimum_component_pixels
+            labels,count_objects=ndimage.label(mask)
             changed=int(mask.sum()); total=int(valid.sum()); transform=roi_transform; crs=str(before.crs); bounds=[float(x) for x in rasterio.transform.array_bounds(before_data.shape[1],before_data.shape[2],transform)]
             transition={}; semantic_mask=None
             if before_semantic is not None and after_semantic is not None:
@@ -86,12 +90,22 @@ class TemporalChangeEngine:
                 semantic_mask=(before_semantic!=after_semantic)&valid
                 for src,dst in zip(before_semantic[semantic_mask],after_semantic[semantic_mask]): transition[f"{int(src)}_to_{int(dst)}"]=transition.get(f"{int(src)}_to_{int(dst)}",0)+1
             features=[]
-            for geom,val in shapes(mask.astype("uint8"),mask=mask,transform=transform):
+            for geom,val in shapes(labels.astype("int32"),mask=mask,transform=transform):
+                component=labels == int(val)
                 area=_area_m2(geom,crs); direction=_direction(geom,bounds,crs)
-                features.append({"type":"Feature","geometry":geom,"properties":{"change_id":f"chg_{len(features)+1}","area_m2":area,"area_ha":area/10000,"direction":direction,"change_score":float(np.mean(score[mask])),"source_ids":[f"src_{_hash(pair.before_path)[:16]}",f"src_{_hash(pair.after_path)[:16]}"],"model_confidence":None}})
+                local_transition=None
+                if semantic_mask is not None and np.any(semantic_mask & component):
+                    counts={}
+                    for src,dst in zip(before_semantic[semantic_mask & component],after_semantic[semantic_mask & component]): counts[f"{int(src)}_to_{int(dst)}"]=counts.get(f"{int(src)}_to_{int(dst)}",0)+1
+                    local_transition=max(counts,key=counts.get)
+                # GeoJSON shown by the web map must be WGS84.  Preserve the
+                # analysis CRS in properties so metric calculations remain
+                # traceable to the exact common-grid geometry.
+                display_geom = transform_geom(crs, "EPSG:4326", geom, precision=8) if crs.upper() != "EPSG:4326" else geom
+                features.append({"type":"Feature","geometry":display_geom,"properties":{"change_id":f"chg_{len(features)+1}","pixel_count":int(component.sum()),"area_m2":area,"area_ha":area/10000,"direction":direction,"change_type":local_transition or "spectral_change","change_score":float(np.mean(score[component])),"source_ids":[f"src_{_hash(pair.before_path)[:16]}",f"src_{_hash(pair.after_path)[:16]}"],"source_geometry_crs":crs,"geometry_crs":"EPSG:4326","model_confidence":None}})
             features.sort(key=lambda item:item["properties"]["area_m2"],reverse=True)
             changed_area=sum(f["properties"]["area_m2"] for f in features); dominant=max(transition,key=transition.get) if transition else None
             result_id="res_"+hashlib.sha256((str(pair.before_path)+str(pair.after_path)).encode()).hexdigest()[:20]
             stats={"changed_area_m2":changed_area,"changed_area_ha":changed_area/10000,"changed_percentage":changed*100/total,"unchanged_percentage":(total-changed)*100/total,"valid_pixel_percentage":valid.sum()*100/mask.size,"area_method":"EPSG:6933_equal_area_polygon_area"}
             description=f"Between {pair.start_datetime or 'the first observation'} and {pair.end_datetime or 'the second observation'}, {stats['changed_area_ha']:.4f} hectares ({stats['changed_percentage']:.2f}% of valid effective-ROI pixels) were identified as changed using fused deterministic spectral evidence."
-            return {"task":"temporal_change_analysis","status":"AVAILABLE","result_id":result_id,"pair":metadata,"effective_roi":{"crs":crs,"bounds":bounds,"transform":[float(x) for x in transform],"width":before_data.shape[2],"height":before_data.shape[1]},"statistics":stats,"threshold":{"method":"otsu_on_fused_spectral_score","value":threshold,"distribution":{"median":float(np.median(score[valid])),"p95":float(np.percentile(score[valid],95))}},"features":{"spectral_magnitude":True,"normalized_spectral_difference":True,"semantic_transition":semantic_mask is not None,"learned_detector":"NOT_EXECUTED"},"transition_matrix":transition,"dominant_transition":dominant,"change_polygons":{"type":"FeatureCollection","features":features},"largest_change_direction":features[0]["properties"]["direction"] if features else "none","description":description,"change_score":"deterministic_fused_feature_score","model_confidence":None,"registration":{"method":"metadata_common_grid_reprojection","status":"passed","estimated_shift_pixels":None},"provenance":{"before_hash":_hash(pair.before_path),"after_hash":_hash(pair.after_path),"algorithm":self.VERSION,"resampling":"bilinear_continuous_features","categorical_resampling":"nearest_required","time_range":[pair.start_datetime,pair.end_datetime]}}
+            return {"task":"temporal_change_analysis","status":"EXPERIMENTAL","result_id":result_id,"pair":metadata,"effective_roi":{"crs":crs,"bounds":bounds,"transform":[float(x) for x in transform],"width":before_data.shape[2],"height":before_data.shape[1]},"statistics":stats,"threshold":{"method":"otsu_on_fused_spectral_score","value":threshold,"distribution":{"median":float(np.median(score[valid])),"p95":float(np.percentile(score[valid],95))}},"features":{"spectral_magnitude":True,"normalized_spectral_difference":True,"semantic_transition":semantic_mask is not None,"learned_detector":"NOT_EXECUTED"},"transition_matrix":transition,"dominant_transition":dominant,"change_polygons":{"type":"FeatureCollection","features":features},"largest_change_direction":features[0]["properties"]["direction"] if features else "none","description":description,"change_score":"deterministic_fused_feature_score","model_confidence":None,"registration":{"method":"metadata_common_grid_reprojection","status":"passed","estimated_shift_pixels":None},"provenance":{"before_hash":_hash(pair.before_path),"after_hash":_hash(pair.after_path),"algorithm":self.VERSION,"resampling":"bilinear_continuous_features","categorical_resampling":"nearest_required","time_range":[pair.start_datetime,pair.end_datetime]}}
