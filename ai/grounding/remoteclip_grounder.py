@@ -1,6 +1,7 @@
 # ai/grounding/remoteclip_grounder.py
 
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -51,7 +52,7 @@ class RemoteCLIPGrounder:
         checkpoint_path = hf_hub_download(
             repo_id=self.REPO_ID,
             filename=self.CHECKPOINT_NAME,
-            cache_dir=r".\checkpoints",
+            cache_dir=os.getenv("SATQUERY_MODEL_CACHE"),
         )
 
         model, _, preprocess = (
@@ -63,7 +64,7 @@ class RemoteCLIPGrounder:
         checkpoint = torch.load(
             checkpoint_path,
             map_location="cpu",
-            weights_only=False,
+            weights_only=True,
         )
 
         model.load_state_dict(
@@ -765,10 +766,10 @@ class RemoteCLIPGrounder:
         return {
             "success": True,
             "task": (
-                "text_guided_region_grounding"
+                "remote_sensing_region_retrieval"
             ),
             "grounding_mode": (
-                "remoteclip_tile_grounding"
+                "remoteclip_tile_relevance"
             ),
             "image_path": str(
                 path
@@ -786,6 +787,11 @@ class RemoteCLIPGrounder:
             "confidence": float(
                 confidence
             ),
+            "score_provenance": {
+                "source": "IMAGE_TEXT_SIMILARITY",
+                "calibrated": False,
+                "interpretation": "relative tile relevance, not object probability",
+            },
             "visual_evidence": (
                 evidence_path
             ),
@@ -808,7 +814,7 @@ class RemoteCLIPGrounder:
                 True
             ),
             "limitations": (
-                "RemoteCLIP grounding identifies "
+                "RemoteCLIP region retrieval identifies "
                 "high-relevance image regions. "
                 "Bounding boxes represent tile-level "
                 "regions rather than exact object "

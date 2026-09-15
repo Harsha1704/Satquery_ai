@@ -916,6 +916,12 @@ class SingleImageVQA:
                 "remote_sensing_adapted":
                     False,
 
+                "model_family": "GENERIC_VQA",
+
+                "model_confidence": None,
+
+                "confidence_provenance": "UNAVAILABLE",
+
                 "baseline":
                     True,
 
