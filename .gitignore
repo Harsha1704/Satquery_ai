@@ -7,6 +7,9 @@
 # Downloaded model weights / checkpoints
 /checkpoints/
 /external/ChangeFormer/checkpoints/
+# Local third-party ChangeFormer clone; it contains upstream source, datasets,
+# samples, caches and checkpoints, not SatQuery-owned integration code.
+/external/ChangeFormer/
 
 # Model / package caches
 .cache/

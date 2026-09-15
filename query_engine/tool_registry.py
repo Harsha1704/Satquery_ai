@@ -38,7 +38,7 @@ REGISTRY = MappingProxyType({
     "multispectral_analysis": ToolDescriptor("multispectral_analysis", "legacy-v1", (Intent.MULTISPECTRAL,), ("multispectral",), ("red", "nir"), ("indices", "statistics")),
     "sar_analysis": ToolDescriptor("sar_analysis", "legacy-v1", (Intent.SAR,), ("sar",), ("sar",), ("statistics", "answer"), "experimental"),
     "optical_sar_fusion": ToolDescriptor("optical_sar_fusion", "legacy-v1", (Intent.FUSION,), ("optical", "sar"), ("optical", "sar"), ("fusion", "answer"), "experimental"),
-    "change_reasoning": ToolDescriptor("change_reasoning", "legacy-v1", (Intent.CHANGE,), ("optical", "multispectral", "sar"), ("before", "after"), ("change", "statistics", "answer")),
+    "change_reasoning": ToolDescriptor("change_reasoning", "temporal-intelligence-v1", (Intent.CHANGE,), ("optical", "multispectral", "sar"), ("before", "after"), ("change", "statistics", "answer", "change_polygons", "transitions")),
     "text_grounding": ToolDescriptor("text_grounding", "legacy-v1", (Intent.GROUNDING,), ("optical", "multispectral"), ("image", "text"), ("regions", "answer"), "experimental"),
 })
 

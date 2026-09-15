@@ -1,0 +1,48 @@
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import numpy as np
+import rasterio
+from rasterio.transform import from_origin
+from query_engine.runtime import configure_raster_runtime
+from ai.temporal import TemporalPair, TemporalChangeEngine, TemporalTrendAnalyzer, TemporalChangeVQA
+
+configure_raster_runtime()
+
+class TemporalIntelligenceTests(unittest.TestCase):
+ def _pair(self, directory, *, shifted=False):
+  before=np.full((1,40,40),.2,dtype="float32"); after=before.copy();after[:,12:28,20:36]=.8
+  transform=from_origin(77,13,.001,.001); paths=[]
+  for name,data,trans in (("before.tif",before,transform),("after.tif",after,from_origin(77.01 if shifted else 77,13,.001,.001))):
+   path=Path(directory)/name
+   with rasterio.open(path,"w",driver="GTiff",width=40,height=40,count=1,dtype="float32",crs="EPSG:4326",transform=trans,nodata=-9999) as dst:dst.write(data)
+   paths.append(path)
+  return paths
+ def test_known_square_has_change_area_and_georeferenced_polygon(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory); result=TemporalChangeEngine().analyze(TemporalPair(before,after,"2023-01-01","2024-01-01"),minimum_component_pixels=4)
+  self.assertGreater(result["statistics"]["changed_area_m2"],0); self.assertGreater(len(result["change_polygons"]["features"]),0)
+  self.assertEqual(result["effective_roi"]["crs"],"EPSG:4326");self.assertIsNone(result["model_confidence"])
+ def test_semantic_transition_matrix_excludes_unchanged_classes(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory); a=np.ones((40,40),dtype=np.uint8);b=a.copy();b[12:28,20:36]=2
+   result=TemporalChangeEngine().analyze(TemporalPair(before,after),before_semantic=a,after_semantic=b,minimum_component_pixels=4)
+  self.assertEqual(result["transition_matrix"],{"1_to_2":256});self.assertEqual(result["dominant_transition"],"1_to_2")
+ def test_common_grid_handles_shifted_source(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory,shifted=True);result=TemporalChangeEngine().analyze(TemporalPair(before,after),minimum_component_pixels=4)
+  self.assertEqual(result["registration"]["method"],"metadata_common_grid_reprojection")
+  self.assertLess(result["effective_roi"]["width"],40)
+ def test_temporal_pair_rejects_reverse_dates(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory)
+   with self.assertRaisesRegex(ValueError,"INVALID_TEMPORAL_PAIR"): TemporalPair(before,after,"2025-01-01","2024-01-01").validate()
+ def test_change_vqa_answers_only_from_result(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory);result=TemporalChangeEngine().analyze(TemporalPair(before,after),minimum_component_pixels=4)
+  answer=TemporalChangeVQA().answer("How much area changed?",result)
+  self.assertIn("hectares",answer["answer"]);self.assertEqual(answer["evidence_result_id"],result["result_id"])
+ def test_trend_requires_three_observations(self):
+  self.assertEqual(TemporalTrendAnalyzer().analyze([2023,2024],[.4,.3])["status"],"insufficient_observations")
+  self.assertEqual(TemporalTrendAnalyzer().analyze([2022,2023,2024],[.6,.5,.4])["status"],"decreasing")
+if __name__=="__main__":unittest.main()
