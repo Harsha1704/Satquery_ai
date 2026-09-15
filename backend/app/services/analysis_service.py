@@ -14,6 +14,9 @@ from query_engine.planner import QueryPlanner
 from query_engine.policy import QueryError, resolve_input
 from query_engine.result_validator import validate_result
 from query_engine.schemas import AnalysisResult, Confidence, JobResponse
+from query_engine.spatial_context import (
+    build_analysis_context, evidence_records, validate_spatial_consistency,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -667,6 +670,15 @@ class AnalysisService:
         status_code = 200
         try:
             checkpoint("preparing", 10, "Preparing server-controlled inputs and the approved execution plan.")
+            # Validate geometry before specialist execution.  A correct ID is
+            # insufficient if the requested AOI lies outside the local raster.
+            preflight_context = build_analysis_context(
+                analysis_id=job_id, query=request.query, aoi=request.aoi, inputs=paths,
+            )
+            preflight_spatial = validate_spatial_consistency(preflight_context, [])
+            if preflight_spatial["status"] == "FAIL":
+                code = "aoi_outside_source" if "AOI_OUTSIDE_SOURCE" in preflight_spatial["failures"] else "spatial_consistency_failed"
+                raise QueryError(code, "; ".join(preflight_spatial["failures"]), 422)
             inputs = {}
             for key, source in paths.items():
                 target = job_dir / "inputs" / (key + source.suffix.lower())
@@ -713,6 +725,13 @@ class AnalysisService:
 
             checkpoint("validating", 83, "Validating alignment, coverage, sensor consistency and threshold stability.")
             validation = _build_evidence_validation(job_dir, plan, task_layer)
+            source_coverage = [item.get("requested_aoi_coverage_pct") for item in preflight_context.get("aoi_source_checks", []) if item.get("requested_aoi_coverage_pct") is not None]
+            if source_coverage:
+                validation["requested_aoi_coverage_pct"] = min(source_coverage)
+                validation["effective_aoi_coverage_pct"] = 100.0
+                validation["partial_aoi_coverage"] = min(source_coverage) < 99.999
+                if validation.get("valid_coverage_pct") is None:
+                    validation["valid_coverage_pct"] = min(source_coverage)
             statistics["validation"] = validation
 
             checkpoint("finalizing", 91, "Finalizing statistics, provenance and published artifacts.")
@@ -737,6 +756,28 @@ class AnalysisService:
                 and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".geojson"}
                 and "inputs" not in path.relative_to(job_dir).parts
             )
+            analysis_context = build_analysis_context(
+                analysis_id=job_id,
+                query=request.query,
+                aoi=request.aoi,
+                inputs=paths,
+                imagery=raw.get("imagery_provenance") or [],
+            )
+            evidence_identity = evidence_records(
+                analysis_id=job_id, context=analysis_context, artifacts=artifacts,
+                aoi=request.aoi, job_dir=job_dir,
+            )
+            spatial_consistency = validate_spatial_consistency(analysis_context, evidence_identity)
+            if spatial_consistency["status"] == "FAIL":
+                raise QueryError("spatial_consistency_failed", "; ".join(spatial_consistency["failures"]), 500)
+            limitations.extend(spatial_consistency["warnings"])
+            statistics.setdefault("provenance", {}).update({
+                "analysis_id": job_id,
+                "result_id": analysis_context["result_id"],
+                "roi_id": analysis_context["roi"]["roi_id"],
+                "source_ids": [item["source_id"] for item in analysis_context["sources"]],
+                "effective_aoi": analysis_context["roi"].get("effective_aoi"),
+            })
             result = AnalysisResult(
                 answer=answer,
                 statistics=raw.get("statistics") or raw.get("analysis") or {},
@@ -744,6 +785,7 @@ class AnalysisService:
                 confidence=build_confidence(
                     routing=plan.parsed.routing_confidence,
                     validation=statistics.get("validation"),
+                    input_configuration=plan.input_configuration,
                 ),
                 limitations=limitations + plan.warnings,
                 provenance={
@@ -754,6 +796,9 @@ class AnalysisService:
                     "aoi": request.aoi.model_dump() if request.aoi else None,
                     "execution_context": execution_context,
                     "source_consistency": source_consistency,
+                    "analysis_context": analysis_context,
+                    "evidence_identity": evidence_identity,
+                    "spatial_consistency": spatial_consistency,
                 },
                 execution_trace=completed_trace(
                     analysis_id=job_id,

@@ -121,6 +121,21 @@ class AOI(Contract):
         area2 = 0.0
         for a, b in zip(outer, outer[1:]):
             area2 += a[0] * b[1] - b[0] * a[1]
+        # Reject bow-tie polygons early.  The test is deliberately small and
+        # dependency-free; adjacent edges share a vertex and are excluded.
+        def orientation(a, b, c):
+            return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        def intersects(a, b, c, d):
+            o1, o2 = orientation(a, b, c), orientation(a, b, d)
+            o3, o4 = orientation(c, d, a), orientation(c, d, b)
+            return o1 * o2 < 0 and o3 * o4 < 0
+        edges = list(zip(outer, outer[1:]))
+        for index, (a, b) in enumerate(edges):
+            for other, (c, d) in enumerate(edges[index + 1:], start=index + 1):
+                if other in {index + 1, len(edges) - 1 if index == 0 else -1}:
+                    continue
+                if intersects(a, b, c, d):
+                    raise ValueError("AOI polygon self-intersects.")
         if abs(area2) < 1e-12:
             raise ValueError("AOI polygon area is effectively zero.")
         return self
@@ -175,6 +190,9 @@ class AnalysisPlan(Contract):
 
 
 class Confidence(Contract):
+    # Legacy scalar fields remain for existing API clients.  The explicit
+    # component fields below carry the public provenance needed to interpret a
+    # score safely.
     routing: float | None = Field(default=None, ge=0, le=1)
     model: float | None = Field(default=None, ge=0, le=1)
     grounding_relevance: float | None = Field(default=None, ge=0, le=1)
@@ -184,6 +202,21 @@ class Confidence(Contract):
     evidence_strength: float | None = Field(default=None, ge=0, le=1)
     overall: float | None = Field(default=None, ge=0, le=1)
     method: str | None = None
+    routing_confidence: float | None = Field(default=None, ge=0, le=1)
+    input_confidence: float | None = Field(default=None, ge=0, le=1)
+    modality_confidence: float | None = Field(default=None, ge=0, le=1)
+    model_confidence: float | None = Field(default=None, ge=0, le=1)
+    evidence_confidence: float | None = Field(default=None, ge=0, le=1)
+    spatial_confidence: float | None = Field(default=None, ge=0, le=1)
+    data_quality_confidence: float | None = Field(default=None, ge=0, le=1)
+    overall_confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence_available: bool = False
+    confidence_method: str | None = None
+    confidence_level: str | None = None
+    overall_type: Literal["SYSTEM_RELIABILITY_SCORE", "MODEL_PROBABILITY", "UNAVAILABLE"] = "UNAVAILABLE"
+    calibrated: bool = False
+    confidence_provenance: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    confidence_warnings: list[str] = Field(default_factory=list)
 
 
 class TraceStep(Contract):

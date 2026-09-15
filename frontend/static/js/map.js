@@ -35,6 +35,7 @@ let satelliteTileErrors = 0;
 let satelliteErrorResetTimer = null;
 let satelliteFallbackActive = false;
 let activeJobId = null;
+let currentAnalysisId = null;
 let cancellationRequested = false;
 
 const $ = (id) => document.getElementById(id);
@@ -885,9 +886,23 @@ function renderAnalysisLegend(job, artifact) {
   els.analysisLegend.classList.remove("hidden");
 }
 
+function evidenceBounds(job, artifact) {
+  const records = job?.result?.provenance?.evidence_identity;
+  const record = Array.isArray(records) ? records.find((item) => item.analysis_id === job.job_id && item.path === artifact) : null;
+  if (!record) return null;
+  if (record.georeferenced && String(record.crs || "").toUpperCase() === "EPSG:4326" && Array.isArray(record.bounds) && record.bounds.length === 4) return record.bounds;
+  if (!record.georeferenced && record.spatial_reference === job?.result?.provenance?.analysis_context?.result_id) {
+    return job.result.provenance.analysis_context?.roi?.display_bounds_wgs84 || null;
+  }
+  return null;
+}
+
 function showEvidenceOnMap(job, artifact) {
-  if (!artifact || !currentAoi || !map?.isStyleLoaded()) return;
-  const bbox = executionBounds(currentAoi);
+  if (!job || job.job_id !== currentAnalysisId) return;
+  const identities = job?.result?.provenance?.evidence_identity;
+  if (Array.isArray(identities) && !identities.some((item) => item.analysis_id === currentAnalysisId && item.path === artifact)) return;
+  if (!artifact || !map?.isStyleLoaded()) return;
+  const bbox = evidenceBounds(job, artifact);
   if (!bbox) return;
   const [w,s,e,n] = bbox;
   clearAnalysisOverlay();
@@ -1003,12 +1018,14 @@ function openComparison() {
 function renderAnalysisResult(payload) {
   const job = payload?.job;
   if (!job || job.status !== "completed" || !job.result) return;
+  if (job.job_id !== currentAnalysisId) return;
   currentJob = job;
   const parsed = job.plan?.parsed || {};
   const years = parsed.years || [];
   const profile = analysisProfile(job);
   const actualSource = deriveActualSource(job);
   const routing = job.result.confidence?.routing;
+  const confidence = job.result.confidence || {};
   const metric = targetMetric(job, profile);
   const changeStats = job.result.statistics?.change || {};
   const quality = qualityStatus(job);
@@ -1025,16 +1042,22 @@ function renderAnalysisResult(payload) {
   els.metricPrimary.parentElement.querySelector("span").textContent = metric.label;
   els.metricPrimary.textContent = metric.value;
   els.metricSatellite.textContent = actualSource.label;
-  els.metricConfidence.textContent = routing == null ? "Rule-routed" : pct(routing);
+  els.metricConfidence.textContent = confidence.confidence_available
+    ? compactLabel(confidence.confidence_level || "Available")
+    : "Unavailable";
   els.metricResultQuality.textContent = resultQualityText(job);
   const validation = validationStats(job);
   const baseSummary = focusedSummary(job, profile, metric);
   els.mapAnswer.textContent = validation?.status === "review"
     ? `${baseSummary} Evidence validation recommends review before treating the mapped area as a definitive land-cover conversion.`
     : baseSummary;
-  els.qualityRouting.textContent = routing == null ? "Rule based" : pct(routing);
-  els.qualityData.textContent = dataQualityLabel(job);
-  els.qualityEvidence.textContent = profile.primaryEvidence.replace(" evidence", "");
+  els.qualityRouting.textContent = routing == null ? "Unavailable" : `${compactLabel(confidence.confidence_provenance?.routing_confidence?.source || "Router")} · ${pct(routing)}`;
+  els.qualityData.textContent = confidence.data_quality_confidence == null
+    ? dataQualityLabel(job)
+    : `${compactLabel(confidence.confidence_provenance?.data_quality_confidence?.source || "Quality gate")} · ${pct(confidence.data_quality_confidence)}`;
+  els.qualityEvidence.textContent = confidence.model_confidence == null
+    ? "Model probability unavailable"
+    : `${compactLabel(confidence.confidence_provenance?.model_confidence?.source || "Model native")} · ${pct(confidence.model_confidence)}`;
   renderValidation(job);
   els.technicalEvidence.textContent = [
     job.result.answer ? `• Engine interpretation: ${job.result.answer}` : null,
@@ -1045,6 +1068,8 @@ function renderAnalysisResult(payload) {
     actualSource.meta ? `• Imagery: ${actualSource.meta}` : null,
     validationStats(job)?.threshold_sensitivity?.spread_percentage_points != null ? `• Threshold sensitivity span: ${Number(validationStats(job).threshold_sensitivity.spread_percentage_points).toFixed(1)} percentage points (${compactLabel(validationStats(job).threshold_sensitivity.status)})` : null,
     validationStats(job)?.urban_ndvi_support_pct != null ? `• Urban cross-check: ${Number(validationStats(job).urban_ndvi_support_pct).toFixed(1)}% of NDBI-increase area also shows NDVI decline` : null,
+    confidence.confidence_method ? `• Reliability method: ${compactLabel(confidence.confidence_method)} (${compactLabel(confidence.overall_type)})` : null,
+    ...(confidence.confidence_warnings || []).map((x)=>`• Confidence: ${x}`),
     taskLayerStats(job)?.note ? `• Task-specific layer: ${taskLayerStats(job).note}` : null
   ].filter(Boolean).join("\n") || "No additional limitations were returned.";
 
@@ -1195,6 +1220,7 @@ async function sendAoiAndQuery() {
 
   clearAnalysisOverlay();
   resetResultPanel();
+  currentAnalysisId = null;
   workflowReset();
   currentPlanPayload = null;
   cancellationRequested = false;
@@ -1232,12 +1258,14 @@ async function sendAoiAndQuery() {
     }
 
     activeJobId = submitted.job_id;
+    currentAnalysisId = submitted.job_id;
     els.send.disabled=false;
     els.send.querySelector("span:first-child").textContent="Cancel analysis";
     setBackendStatus("Analysis job accepted. Progress now comes from backend execution events.","running");
     workflowFromJobState(submitted);
 
     const state = await pollAnalysisJob(activeJobId);
+    if (state.job_id && state.job_id !== currentAnalysisId) return;
     if (state.status !== "completed" || !state.job?.result) {
       renderFailure({job:state.job}, state.message || (state.status === "cancelled" ? "Analysis cancelled." : "Analysis did not complete."));
       setBackendStatus(state.status === "cancelled" ? "Analysis cancelled." : "Analysis stopped because execution or evidence requirements were not met.","error");
