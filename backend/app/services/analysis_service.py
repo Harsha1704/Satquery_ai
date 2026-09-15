@@ -725,6 +725,15 @@ class AnalysisService:
 
             checkpoint("validating", 83, "Validating alignment, coverage, sensor consistency and threshold stability.")
             validation = _build_evidence_validation(job_dir, plan, task_layer)
+            temporal_result = statistics.get("temporal") if isinstance(statistics.get("temporal"), dict) else None
+            if temporal_result:
+                temporal_stats = temporal_result.get("statistics") or {}
+                validation["valid_coverage_pct"] = temporal_stats.get("valid_pixel_percentage")
+                validation["temporal_engine"] = temporal_result.get("provenance", {}).get("algorithm")
+                validation["effective_roi"] = temporal_result.get("effective_roi")
+                registration = temporal_result.get("registration") or {}
+                if registration.get("status") == "passed":
+                    validation["alignment"] = {"status": "passed", "label": "Common-grid reprojection", "method": registration.get("method")}
             source_coverage = [item.get("requested_aoi_coverage_pct") for item in preflight_context.get("aoi_source_checks", []) if item.get("requested_aoi_coverage_pct") is not None]
             if source_coverage:
                 validation["requested_aoi_coverage_pct"] = min(source_coverage)

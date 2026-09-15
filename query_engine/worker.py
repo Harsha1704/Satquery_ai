@@ -69,6 +69,37 @@ def run(payload):
             raise QueryError("aoi_too_large", "Select a smaller area for historical analysis.", 413) from exc
         except gee.NoImageryError as exc:
             raise QueryError("no_imagery", "No usable imagery was found for this area and time range.") from exc
+    # Local, explicit before/after inputs use the deterministic temporal
+    # engine directly. It retains the existing legacy adapter for specialist
+    # flows that do not yet have an equivalent temporal implementation.
+    if plan.source == "local" and plan.parsed.intent.value == "change_detection" and {"before_path", "after_path"}.issubset(inputs):
+        from ai.temporal import TemporalPair, TemporalChangeEngine, TemporalChangeVQA
+        try:
+            years = list(plan.parsed.years or [])
+            result = TemporalChangeEngine().analyze(TemporalPair(
+                Path(inputs["before_path"]), Path(inputs["after_path"]),
+                str(years[0]) if years else None, str(years[1]) if len(years) > 1 else None,
+            ))
+            from query_engine.result_validator import validate_temporal_result
+            validate_temporal_result(result)
+            artifact = Path("artifacts") / "temporal_change_polygons.geojson"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text(json.dumps(result["change_polygons"], allow_nan=False), encoding="utf-8")
+            answer = TemporalChangeVQA().answer(request.query, result)["answer"]
+            return json_safe({
+                "success": True, "answer": answer,
+                "statistics": {"temporal": result, "change": result["statistics"]},
+                "imagery_provenance": [
+                    {"source_id": f"src_{result['provenance']['before_hash'][:16]}", "role": "before"},
+                    {"source_id": f"src_{result['provenance']['after_hash'][:16]}", "role": "after"},
+                ],
+                "temporal_result": result,
+                "evidence": [str(artifact)],
+                "limitations": ["Learned change inference was not executed; this result uses deterministic spectral change fusion."],
+            })
+        except ValueError as exc:
+            code = str(exc).split(":", 1)[0]
+            raise QueryError(code.lower(), str(exc), 422) from exc
     _progress("analyzing", 52, "Running the task-specific GeoAI analysis.")
     output = execute_legacy(plan, inputs)
     _progress("analyzing", 64, "Core inference completed; validating worker output.")

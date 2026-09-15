@@ -1,4 +1,5 @@
 import unittest
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import numpy as np
@@ -6,6 +7,8 @@ import rasterio
 from rasterio.transform import from_origin
 from query_engine.runtime import configure_raster_runtime
 from ai.temporal import TemporalPair, TemporalChangeEngine, TemporalTrendAnalyzer, TemporalChangeVQA
+from query_engine.schemas import AnalysisPlan, AnalysisRequest, Inputs, Intent, ParsedQuery
+from query_engine.worker import run
 
 configure_raster_runtime()
 
@@ -45,4 +48,11 @@ class TemporalIntelligenceTests(unittest.TestCase):
  def test_trend_requires_three_observations(self):
   self.assertEqual(TemporalTrendAnalyzer().analyze([2023,2024],[.4,.3])["status"],"insufficient_observations")
   self.assertEqual(TemporalTrendAnalyzer().analyze([2022,2023,2024],[.6,.5,.4])["status"],"decreasing")
+ def test_local_worker_uses_temporal_engine_and_publishes_geojson(self):
+  with TemporaryDirectory() as directory:
+   before,after=self._pair(directory); plan=AnalysisPlan(parsed=ParsedQuery(query="How much area changed?",intent=Intent.CHANGE),tools=["change_reasoning"],source="local")
+   request=AnalysisRequest(query="How much area changed?",inputs=Inputs(before_path="before.tif",after_path="after.tif")); original=Path.cwd(); os.chdir(directory)
+   try: output=run({"plan":plan.model_dump(mode="json"),"request":request.model_dump(mode="json"),"inputs":{"before_path":str(before),"after_path":str(after)}})
+   finally: os.chdir(original)
+   self.assertTrue(output["success"]);self.assertIn("temporal",output["statistics"]);self.assertTrue((Path(directory)/"artifacts"/"temporal_change_polygons.geojson").is_file())
 if __name__=="__main__":unittest.main()
