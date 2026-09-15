@@ -1,3 +1,5 @@
+from email.mime import image
+
 import numpy as np
 
 from ai.semantic import (
@@ -42,10 +44,28 @@ def test_semantic_model():
 
     predictor = SemanticPredictor(model)
 
-    prediction = predictor.predict(image)
+    # Test raw prediction API
+    prediction_mask = predictor.predict(image)
 
-    assert "prediction_mask" in prediction
+    assert isinstance(prediction_mask, np.ndarray)
+    assert prediction_mask.shape == (100, 100)
+    assert prediction_mask.dtype == np.uint8
+
+    print("Raw prediction   : PASS")
+
+    # Test metadata prediction API
+    prediction = predictor.predict_with_metadata(image)
+
+    assert "mask" in prediction
     assert "class_map" in prediction
+    assert "shape" in prediction
+    assert "dtype" in prediction
+    assert "classes" in prediction
+
+    assert prediction["mask"].shape == (100, 100)
+    assert prediction["mask"].dtype == np.uint8
+
+    print("Metadata prediction: PASS")
 
     print("Predictor         : PASS")
     print("Class map         :", prediction["class_map"])

@@ -1,135 +1,71 @@
-# ================================
-# Python
-# ================================
-__pycache__/
+# =========================================================
+# Local datasets / evaluation data
+# =========================================================
+/data/
+/datasets/
+
+# Downloaded model weights / checkpoints
+/checkpoints/
+/external/ChangeFormer/checkpoints/
+
+# Model / package caches
+.cache/
+.huggingface/
+**/__pycache__/
 *.py[cod]
-*$py.class
-*.pyo
-*.pyd
+.pytest_cache/
 
-# ================================
-# Virtual Environments
-# ================================
-.venv/
-.venv-ml/
-venv/
-env/
-ENV/
+# Virtual environments
+/.venv/
+/.venv-ml/
+/venv/
 
-# ================================
-# Environment / Secrets
-# ================================
+# SatQuery runtime state
+/outputs/
+/frontend/uploads/
+/frontend/static/map_previews/
+*.sqlite3
+*.log
+
+# Secrets
 .env
 .env.*
 !.env.example
-*.pem
-*.key
 
-# ================================
-# Jupyter
-# ================================
-.ipynb_checkpoints/
+# Generated artifacts
+/artifacts/
+/reports/generated/
 
-# ================================
-# VS Code
-# ================================
-.vscode/
-*.code-workspace
+# Local patch installers / backups
+/industry_install/
+/phase2_aoi_fix/
+/phase2_map/
+/phase3/
+/phase*_install*/
+/phase*_backup*/
+/tomorrow*_install*/
+/tomorrow*_backup*/
+/v*_install*/
+/v*_backup*/
 
-# ================================
-# ML Models / Checkpoints
-# ================================
-checkpoints/
-models/
-*.h5
-*.hdf5
-*.keras
-*.pt
-*.pth
-*.ckpt
-*.onnx
-*.safetensors
-*.bin
+# One-off backup files
+*.before_*
+/gee_temporal_backup_*.py
 
-# ================================
-# Datasets
-# ================================
-datasets/
-data/
-*.csv
-*.parquet
-*.tif
-*.tiff
-*.jp2
-*.nc
-*.hdf
-*.h5
+# Generated tree / diagnostic files
+/*_tree.txt
+/satquery_structure.txt
+/geospatial_tree.txt
 
-# ================================
-# Generated Outputs
-# ================================
-outputs/
-results/
-runs/
-logs/
-*.log
-
-# ================================
-# Experiments
-# ================================
-experiments/
-
-# ================================
-# Temporary / Cache Files
-# ================================
-*.tmp
-*.temp
-*.cache
-*.bak
-*.swp
-.DS_Store
-Thumbs.db
-
-# ================================
-# Large Archives
-# ================================
+# Archives
 *.zip
-*.rar
 *.7z
 *.tar
-*.gz
+*.tar.*
 
-# ================================
-# Node / Frontend
-# ================================
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-
-# Build directories
-dist/
-build/
-.next/
-.vite/
-
-# ================================
-# Coverage / Testing
-# ================================
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-.nox/
-
-# ================================
-# OS Files
-# ================================
-*.lnk
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 desktop.ini
-
-
-# ================================
-# Frontend User Uploads
-# ================================
-frontend/uploads/

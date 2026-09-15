@@ -182,8 +182,8 @@ def _mask_landsat_sr(image):
 # because the same area produces ~9x more pixels at 10 m.
 # ============================================================
 
-MAX_KM_FINE_RESOLUTION = 5.0    # cap when either year uses 10 m Sentinel-2
-MAX_KM_COARSE_RESOLUTION = 10.0  # cap when both years use 30 m Landsat
+MAX_KM_FINE_RESOLUTION = 15.0    # cap when either year uses 10 m Sentinel-2
+MAX_KM_COARSE_RESOLUTION = 30.0  # cap when both years use 30 m Landsat
 
 
 class RoiTooLargeError(RuntimeError):
@@ -478,6 +478,7 @@ def fetch_year_composite(
     max_cloud_pct: float = 60.0,
     spec: Optional[Dict[str, Any]] = None,
     dimensions: Optional[Tuple[int, int]] = None,
+    statistics_geometry: Optional[List[Any]] = None,
 ) -> YearComposite:
     """Build a cloud-filtered median composite for `year` over `bounds`,
     download it as an RGB GeoTIFF, and return summary statistics
@@ -496,9 +497,19 @@ def fetch_year_composite(
     init_earth_engine()
 
     west, south, east, north = bounds_wgs84
+    # The rectangle is the retrieval/download envelope. Statistics may use the
+    # exact user-selected polygon independently.
     region = ee.Geometry.Rectangle(
         [west, south, east, north], proj="EPSG:4326", geodesic=False
     )
+    stats_region = region
+    if statistics_geometry:
+        try:
+            stats_region = ee.Geometry.Polygon(
+                statistics_geometry, proj="EPSG:4326", geodesic=False
+            )
+        except Exception as exc:
+            raise ValueError("Invalid exact AOI polygon supplied for statistics.") from exc
 
     if spec is None:
         spec, collection, image_count = _resolve_collection(region, year, max_cloud_pct)
@@ -534,7 +545,7 @@ def fetch_year_composite(
 
     raw_stats = stats_image.reduceRegion(
         reducer=ee.Reducer.mean(),
-        geometry=region,
+        geometry=stats_region,
         scale=native_scale,
         maxPixels=1_000_000_000,
         bestEffort=True,
@@ -544,7 +555,7 @@ def fetch_year_composite(
         ndwi.gt(0.0)
         .reduceRegion(
             reducer=ee.Reducer.mean(),
-            geometry=region,
+            geometry=stats_region,
             scale=native_scale,
             maxPixels=1_000_000_000,
             bestEffort=True,
@@ -586,6 +597,20 @@ def fetch_year_composite(
     out_path = workdir / f"gee_{year}_{uuid.uuid4().hex[:8]}.tif"
     out_path.write_bytes(response.content)
 
+    # Save the aligned spectral-index stack as a supplementary artifact.
+    # Band order is NDVI, NDBI, NDWI.  This is intentionally best-effort:
+    # failure to download the index stack must not invalidate the core RGB
+    # temporal analysis.
+    try:
+        index_params = dict(download_params)
+        index_url = stats_image.toFloat().getDownloadURL(index_params)
+        index_response = requests.get(index_url, timeout=180)
+        index_response.raise_for_status()
+        index_path = workdir / f"gee_indices_{year}_{uuid.uuid4().hex[:8]}.tif"
+        index_path.write_bytes(index_response.content)
+    except Exception:
+        pass
+
     return YearComposite(
         year=year,
         path=out_path,
@@ -598,6 +623,264 @@ def fetch_year_composite(
             "water_fraction": water_fraction,
         },
     )
+
+
+def _index_image(composite, spec: Dict[str, Any], metric: str):
+    """Return a single-band spectral-index image for the requested metric."""
+    key = str(metric or "").lower()
+    if key == "ndvi":
+        return composite.normalizedDifference([spec["nir"], spec["red"]]).rename("INDEX")
+    if key == "ndbi":
+        return composite.normalizedDifference([spec["swir"], spec["nir"]]).rename("INDEX")
+    if key in {"ndwi", "water"}:
+        return composite.normalizedDifference([spec["green"], spec["nir"]]).rename("INDEX")
+    raise ValueError(f"Unsupported task index: {metric}")
+
+
+def _composite_from_plan_spec(region, year: int, spec: Dict[str, Any], max_cloud_pct: float):
+    """Build the same cloud-masked median composite used by the temporal fetch."""
+    collection = _build_filtered_collection(spec, spec["id"], region, year, max_cloud_pct)
+    count = collection.size().getInfo()
+    if count == 0:
+        collection = (
+            ee.ImageCollection(spec["id"])
+            .filterBounds(region)
+            .filterDate(f"{year}-01-01", f"{year}-12-31")
+        )
+        count = collection.size().getInfo()
+    if count == 0:
+        raise NoImageryError(
+            f"No usable {spec.get('label', spec['id'])} scenes were found "
+            f"over this area for {year}."
+        )
+    return collection.map(spec["mask_fn"]).median().clip(region), int(count)
+
+
+def fetch_task_change_evidence(
+    bounds_wgs84: List[float],
+    before_year: int,
+    after_year: int,
+    metric: str,
+    output_dir: Path,
+    threshold: float,
+    positive_color: str,
+    negative_color: str,
+    max_cloud_pct: float = 60.0,
+    aoi_coordinates: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    """Generate a calibrated task-specific change mask directly in Earth Engine.
+
+    Phase 6.1 adds four validation safeguards:
+      * exact AOI polygon statistics when coordinates are supplied;
+      * a minimum spectral-change magnitude for water class transitions;
+      * threshold-sensitivity statistics at 0.75x / 1.0x / 1.5x threshold;
+      * metadata describing sensor/grid consistency for downstream validation.
+
+    NDVI/NDBI remain spectral indicators rather than object counts. Water change
+    requires both a water/non-water class transition and a minimum NDWI delta.
+    """
+    init_earth_engine()
+
+    plan = plan_temporal_fetch(
+        bounds_wgs84=bounds_wgs84,
+        before_year=int(before_year),
+        after_year=int(after_year),
+        max_cloud_pct=max_cloud_pct,
+    )
+
+    west, south, east, north = [float(x) for x in bounds_wgs84]
+    if aoi_coordinates:
+        try:
+            region = ee.Geometry.Polygon(
+                aoi_coordinates, proj="EPSG:4326", geodesic=False
+            )
+        except Exception:
+            region = ee.Geometry.Rectangle(
+                [west, south, east, north], proj="EPSG:4326", geodesic=False
+            )
+    else:
+        region = ee.Geometry.Rectangle(
+            [west, south, east, north], proj="EPSG:4326", geodesic=False
+        )
+
+    before_composite, before_count = _composite_from_plan_spec(
+        region, int(before_year), plan.before_spec, max_cloud_pct
+    )
+    after_composite, after_count = _composite_from_plan_spec(
+        region, int(after_year), plan.after_spec, max_cloud_pct
+    )
+
+    metric_key = str(metric or "").lower()
+    before_index = _index_image(before_composite, plan.before_spec, metric_key)
+    after_index = _index_image(after_composite, plan.after_spec, metric_key)
+    valid = before_index.mask().And(after_index.mask())
+    delta = after_index.subtract(before_index).rename("DELTA").updateMask(valid)
+
+    def masks_for(t_value: float):
+        t_value = float(t_value)
+        if metric_key in {"ndwi", "water"}:
+            # Require a class crossing AND a meaningful index movement. This
+            # prevents tiny values around NDWI=0 from becoming false water gain/loss.
+            pos = (
+                before_index.lte(0)
+                .And(after_index.gt(0))
+                .And(delta.gte(t_value))
+                .And(valid)
+            )
+            neg = (
+                before_index.gt(0)
+                .And(after_index.lte(0))
+                .And(delta.lte(-t_value))
+                .And(valid)
+            )
+        else:
+            pos = delta.gte(t_value).And(valid)
+            neg = delta.lte(-t_value).And(valid)
+        return pos, neg, pos.Or(neg)
+
+    t = max(0.001, float(threshold))
+    low_t = max(0.001, t * 0.75)
+    high_t = t * 1.50
+    positive, negative, changed = masks_for(t)
+    _, _, changed_low = masks_for(low_t)
+    _, _, changed_high = masks_for(high_t)
+    method = "water_class_transition" if metric_key in {"ndwi", "water"} else "index_delta_threshold"
+
+    # For urban analysis, measure how much of the NDBI-increase evidence is
+    # independently supported by vegetation decline. It is a validation signal,
+    # not an additional hard gate, because urban growth can occur on bare land.
+    urban_support = None
+    if metric_key == "ndbi":
+        before_ndvi = _index_image(before_composite, plan.before_spec, "ndvi")
+        after_ndvi = _index_image(after_composite, plan.after_spec, "ndvi")
+        ndvi_delta = after_ndvi.subtract(before_ndvi).updateMask(valid)
+        urban_support = positive.And(ndvi_delta.lte(-0.02))
+
+    pixel_area = ee.Image.pixelArea()
+    bands = [
+        pixel_area.updateMask(valid).rename("valid_area"),
+        pixel_area.updateMask(positive).rename("positive_area"),
+        pixel_area.updateMask(negative).rename("negative_area"),
+        pixel_area.updateMask(changed).rename("changed_area"),
+        pixel_area.updateMask(changed_low).rename("changed_low_area"),
+        pixel_area.updateMask(changed_high).rename("changed_high_area"),
+    ]
+    if urban_support is not None:
+        bands.append(pixel_area.updateMask(urban_support).rename("urban_support_area"))
+    area_image = ee.Image.cat(*bands)
+    area_stats = area_image.reduceRegion(
+        reducer=ee.Reducer.sum(),
+        geometry=region,
+        scale=float(plan.target_scale_m),
+        maxPixels=100_000_000,
+        bestEffort=False,
+    ).getInfo() or {}
+
+    def area_km2(name: str) -> float:
+        try:
+            value = float(area_stats.get(name) or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        return max(0.0, value / 1_000_000.0)
+
+    valid_area = area_km2("valid_area")
+    positive_area = area_km2("positive_area")
+    negative_area = area_km2("negative_area")
+    changed_area = area_km2("changed_area")
+    low_area = area_km2("changed_low_area")
+    high_area = area_km2("changed_high_area")
+
+    def pct(area: float) -> float:
+        return (area / valid_area * 100.0) if valid_area > 0 else 0.0
+
+    changed_pct = pct(changed_area)
+    positive_pct = pct(positive_area)
+    negative_pct = pct(negative_area)
+    low_pct = pct(low_area)
+    high_pct = pct(high_area)
+    sensitivity_span = max(0.0, low_pct - high_pct)
+    if sensitivity_span <= 10.0:
+        sensitivity_status = "stable"
+    elif sensitivity_span <= 25.0:
+        sensitivity_status = "moderate"
+    else:
+        sensitivity_status = "high"
+
+    urban_support_pct = None
+    if urban_support is not None and positive_area > 0:
+        urban_support_pct = area_km2("urban_support_area") / positive_area * 100.0
+
+    classes = ee.Image(0).where(positive, 1).where(negative, 2)
+    classes = classes.updateMask(changed)
+    visual = classes.visualize(
+        min=1,
+        max=2,
+        palette=[positive_color.lstrip("#"), negative_color.lstrip("#")],
+        opacity=0.82,
+    )
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = {
+        "ndvi": "ndvi_change_layer.png",
+        "ndbi": "ndbi_change_layer.png",
+        "ndwi": "water_change_layer.png",
+        "water": "water_change_layer.png",
+    }.get(metric_key, "task_change_layer.png")
+    out_path = output_dir / filename
+
+    thumb_params = {
+        "region": region,
+        "dimensions": f"{int(plan.width_px)}x{int(plan.height_px)}",
+        "format": "png",
+    }
+    thumb_url = visual.getThumbURL(thumb_params)
+    response = requests.get(thumb_url, timeout=180)
+    response.raise_for_status()
+    out_path.write_bytes(response.content)
+
+    try:
+        exact_aoi_area_km2 = max(0.0, float(region.area(maxError=1).getInfo()) / 1_000_000.0)
+    except Exception:
+        width_km, height_km = bbox_size_km(bounds_wgs84)
+        exact_aoi_area_km2 = max(0.0, width_km * height_km)
+    coverage_pct = (valid_area / exact_aoi_area_km2 * 100.0) if exact_aoi_area_km2 > 0 else None
+
+    return {
+        "metric": "ndwi" if metric_key in {"ndwi", "water"} else metric_key,
+        "method": method,
+        "threshold": t,
+        "before_year": int(before_year),
+        "after_year": int(after_year),
+        "changed_percentage": round(changed_pct, 3),
+        "positive_percentage": round(positive_pct, 3),
+        "negative_percentage": round(negative_pct, 3),
+        "affected_area_km2": round(changed_area, 4),
+        "positive_area_km2": round(positive_area, 4),
+        "negative_area_km2": round(negative_area, 4),
+        "valid_area_km2": round(valid_area, 4),
+        "aoi_area_km2": round(exact_aoi_area_km2, 4),
+        "analysis_coverage_pct": round(min(100.0, coverage_pct), 2) if coverage_pct is not None else None,
+        "threshold_sensitivity": {
+            "lower_threshold": round(low_t, 5),
+            "base_threshold": round(t, 5),
+            "higher_threshold": round(high_t, 5),
+            "changed_pct_lower": round(low_pct, 3),
+            "changed_pct_base": round(changed_pct, 3),
+            "changed_pct_higher": round(high_pct, 3),
+            "spread_percentage_points": round(sensitivity_span, 3),
+            "status": sensitivity_status,
+        },
+        "urban_ndvi_support_pct": round(urban_support_pct, 2) if urban_support_pct is not None else None,
+        "before_scene_count": before_count,
+        "after_scene_count": after_count,
+        "target_scale_m": float(plan.target_scale_m),
+        "grid_width_px": int(plan.width_px),
+        "grid_height_px": int(plan.height_px),
+        "cross_sensor": bool(plan.cross_sensor),
+        "exact_aoi_statistics": bool(aoi_coordinates),
+        "artifact_path": str(out_path),
+    }
 
 
 # ============================================================

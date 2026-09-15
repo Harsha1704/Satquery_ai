@@ -1,5 +1,9 @@
 from pathlib import Path
 import json
+import unittest
+
+if __name__ != "__main__":
+    raise unittest.SkipTest("Manual Earth Engine / ChangeFormer integration script; run directly when configured.")
 
 import gee_temporal
 from ai.router.orchestrator import SatQueryOrchestrator

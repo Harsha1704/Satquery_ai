@@ -1,0 +1,6 @@
+# Install into the existing ML environment; specialist dependencies stay in /requirements.txt.
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn==0.52.4
+# TestClient support for the model-free contract tests.
+httpx==0.28.1

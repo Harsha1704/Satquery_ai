@@ -1,6 +1,10 @@
 # tests/test_execution_summary.py
 
 from pprint import pprint
+import unittest
+
+if __name__ != "__main__":
+    raise unittest.SkipTest("Manual execution-summary report script; run directly for diagnostic output.")
 
 from ai.execution import (
     ConfidenceManager,

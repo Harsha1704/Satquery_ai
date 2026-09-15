@@ -4,6 +4,7 @@ from .classes import (
     CLASS_DESCRIPTIONS,
 )
 from .model import SemanticSegmentationModel
+from ai.models import SemanticModel
 from .predictor import SemanticPredictor
 
 
@@ -12,5 +13,6 @@ __all__ = [
     "LandCoverClass",
     "CLASS_DESCRIPTIONS",
     "SemanticSegmentationModel",
+    "SemanticModel",
     "SemanticPredictor",
 ]

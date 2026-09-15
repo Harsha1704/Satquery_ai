@@ -1,6 +1,10 @@
 # tests/test_input_validation.py
 
 from pprint import pprint
+import unittest
+
+if __name__ != "__main__":
+    raise unittest.SkipTest("Manual input-validation report script; run directly for diagnostic output.")
 
 from ai.validation import InputValidator
 

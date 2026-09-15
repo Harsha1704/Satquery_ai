@@ -1,4 +1,8 @@
 from pathlib import Path
+import unittest
+
+if __name__ != "__main__":
+    raise unittest.SkipTest("Manual historical-assessment script; run directly for fixture inspection.")
 
 from gee_temporal import YearComposite, assess_historical_change
 

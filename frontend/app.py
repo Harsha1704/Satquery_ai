@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+import re
 from threading import Lock
 import os
 import sys
@@ -12,6 +13,9 @@ from datetime import datetime
 from math import isfinite
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import urlopen
 
 import numpy as np
 from PIL import Image
@@ -22,6 +26,7 @@ from flask import (
     jsonify,
     render_template,
     request,
+    Response,
     send_file,
 )
 
@@ -2667,6 +2672,41 @@ def map_view():
     return render_template(
         "map.html"
     )
+
+
+@app.route("/api/map-artifacts/<job_id>/<path:artifact_path>")
+def map_artifact_proxy(job_id: str, artifact_path: str):
+    """Serve API evidence through the Flask origin used by the map page.
+
+    The browser therefore never needs a cross-origin request to the analysis
+    API. The FastAPI endpoint remains the authority for published artifacts.
+    """
+    if not re.fullmatch(r"ana_[0-9a-f]{32}", job_id):
+        abort(404)
+    parts = artifact_path.split("/")
+    if not parts or any(not part or part in {".", ".."} for part in parts):
+        abort(404)
+
+    safe_path = "/".join(quote(part, safe="") for part in parts)
+    endpoint = (
+        "http://127.0.0.1:8000/api/v1/jobs/"
+        f"{job_id}/artifacts/{safe_path}"
+    )
+    try:
+        with urlopen(endpoint, timeout=30) as upstream:
+            content_type = upstream.headers.get_content_type()
+            if not content_type.startswith(("image/", "application/geo+json")):
+                abort(415)
+            return Response(
+                upstream.read(),
+                status=upstream.status,
+                content_type=content_type,
+                headers={"Cache-Control": "private, max-age=300"},
+            )
+    except HTTPError as exc:
+        abort(exc.code if exc.code in {404, 415} else 502)
+    except (URLError, TimeoutError):
+        abort(503)
 
 
 @app.route(

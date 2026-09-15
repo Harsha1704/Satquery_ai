@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SatQuery AI | Geospatial Intelligence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/map.css') }}">
+</head>
+<body>
+<div class="map-app">
+    <header class="map-header">
+        <a class="map-brand" href="/">
+            <div class="logo">🛰️</div>
+            <div>
+                <strong>SatQuery<span>AI</span></strong>
+                <small>Geospatial Intelligence Platform</small>
+            </div>
+        </a>
+        <nav>
+            <a href="/" class="nav-link">◉ Analyze</a>
+            <a href="/map-view" class="nav-link active">◈ World Map</a>
+            <a href="#" class="nav-link">◫ Datasets</a>
+            <a href="#" class="nav-link">▣ Reports</a>
+        </nav>
+        <div class="environment-pill">
+            <span class="status-dot"></span>
+            Phase 2 Map
+        </div>
+    </header>
+
+    <main class="map-grid">
+        <aside class="map-sidebar">
+            <div class="side-title">
+                <span>WORLDWIDE ANALYSIS</span>
+                <h2>Area of Interest</h2>
+                <p>Search anywhere, then draw the area SatQuery should analyze.</p>
+            </div>
+
+            <section class="map-card">
+                <div class="card-title">Search location</div>
+                <form id="locationSearchForm" class="search-row">
+                    <input id="locationSearchInput" type="search" placeholder="City, region, landmark..." autocomplete="off">
+                    <button type="submit">Search</button>
+                </form>
+                <div id="searchStatus" class="micro-status" aria-live="polite">
+                    Press Enter or Search. No autocomplete requests are sent.
+                </div>
+                <div id="searchResults" class="search-results"></div>
+            </section>
+
+            <section class="map-card">
+                <div class="card-title">Select area</div>
+                <div class="aoi-tools" id="aoiTools">
+                    <button type="button" data-mode="rectangle">▭ Rectangle</button>
+                    <button type="button" data-mode="polygon">◇ Polygon</button>
+                    <button type="button" data-mode="circle">◯ Circle</button>
+                    <button type="button" data-mode="freehand">✎ Freehand</button>
+                    <button type="button" data-mode="point">• Point</button>
+                </div>
+                <div class="aoi-actions">
+                    <button id="clearAoiBtn" type="button" class="danger-ghost">Clear AOI</button>
+                    <button id="fitAoiBtn" type="button">Fit AOI</button>
+                </div>
+                <div id="aoiSummary" class="aoi-summary">
+                    <div class="empty">No AOI selected.</div>
+                </div>
+            </section>
+
+            <section class="map-card">
+                <div class="card-title">Map layers</div>
+                <label class="layer-toggle">
+                    <input id="baseLayerToggle" type="checkbox" checked>
+                    <span><strong>Base map</strong><small>Vector reference map</small></span>
+                </label>
+                <label class="layer-toggle">
+                    <input id="satelliteLayerToggle" type="checkbox">
+                    <span><strong>Satellite imagery</strong><small>World imagery raster layer</small></span>
+                </label>
+                <label class="layer-toggle">
+                    <input id="analysisLayerToggle" type="checkbox" checked>
+                    <span><strong>Analysis result</strong><small>Latest SatQuery geospatial evidence</small></span>
+                </label>
+                <div id="layerList" class="layer-list">
+                    <div class="empty">No analysis layers loaded.</div>
+                </div>
+            </section>
+        </aside>
+
+        <section class="map-workspace">
+            <div class="map-toolbar">
+                <div>
+                    <span class="toolbar-label">SATQUERY GLOBAL GEOINT WORKSPACE</span>
+                    <h1>Interactive Earth Analysis</h1>
+                </div>
+                <div class="toolbar-actions">
+                    <button id="resetGlobeBtn" type="button">◎ World</button>
+                    <button id="fitBoundsBtn" type="button">⛶ Fit Result</button>
+                    <button id="toggleOverlayBtn" type="button">◫ Toggle Evidence</button>
+                </div>
+            </div>
+
+            <div class="map-container">
+                <div id="map"></div>
+                <div class="map-floating-hint" id="mapHint">
+                    Draw an AOI to prepare a live geospatial query.
+                </div>
+                <div class="map-status">
+                    <div><span>Latitude</span><strong id="cursorLat">--</strong></div>
+                    <div><span>Longitude</span><strong id="cursorLng">--</strong></div>
+                    <div><span>Zoom</span><strong id="zoomLevel">--</strong></div>
+                    <div><span>Projection</span><strong>Globe</strong></div>
+                </div>
+            </div>
+        </section>
+
+        <aside class="info-panel">
+            <section class="info-card primary-card">
+                <div class="card-heading">
+                    <div>
+                        <span class="eyebrow">LIVE CONTEXT</span>
+                        <h2>Selected AOI</h2>
+                    </div>
+                    <span id="aoiStateBadge" class="state-badge">Waiting</span>
+                </div>
+                <div id="selectedAoiDetails">
+                    <div class="empty">Draw a polygon, rectangle, circle, freehand area, or point.</div>
+                </div>
+            </section>
+
+            <section class="info-card">
+                <div class="card-heading">
+                    <div>
+                        <span class="eyebrow">LATEST ANALYSIS</span>
+                        <h2>SatQuery Result</h2>
+                    </div>
+                </div>
+
+                <div class="answer-box">
+                    <span>Query</span>
+                    <p id="mapQuery">No previous analysis loaded.</p>
+                </div>
+
+                <div class="answer-box">
+                    <span>Answer</span>
+                    <p id="mapAnswer">No result available.</p>
+                </div>
+
+                <div class="answer-grid">
+                    <div class="answer-box">
+                        <span>Model / Engine</span>
+                        <p id="mapModel">--</p>
+                    </div>
+                    <div class="answer-box">
+                        <span>Routing Confidence</span>
+                        <p id="mapConfidence">--</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="info-card">
+                <div class="card-heading">
+                    <div><span class="eyebrow">DATA</span><h2>Dataset Metadata</h2></div>
+                </div>
+                <div id="datasetMetadata" class="metadata-list">
+                    <div class="empty">No geospatial dataset loaded.</div>
+                </div>
+            </section>
+
+            <section class="info-card">
+                <div class="card-heading">
+                    <div><span class="eyebrow">SPATIAL</span><h2>Spatial Metadata</h2></div>
+                </div>
+                <div id="spatialMetadata">
+                    <div class="empty">No metadata loaded.</div>
+                </div>
+                <div class="crs-inline">
+                    <span>Source CRS</span>
+                    <strong id="sourceCRS">--</strong>
+                </div>
+            </section>
+        </aside>
+    </main>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/terra-draw@1/dist/terra-draw.umd.js"></script>
+<script src="https://unpkg.com/terra-draw-maplibre-gl-adapter@1/dist/terra-draw-maplibre-gl-adapter.umd.js"></script>
+<script src="{{ url_for('static', filename='js/map.js') }}"></script>
+</body>
+</html>

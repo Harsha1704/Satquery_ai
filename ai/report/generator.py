@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import json
 import html
+import base64
+import mimetypes
 
 
 class SatQueryReportGenerator:
@@ -690,7 +692,7 @@ Intent
 
 <div class="metric">
 <div class="metric-label">
-Confidence
+Routing Confidence
 </div>
 <div class="metric-value">
 {percentage}%
@@ -733,7 +735,7 @@ Model
 
 <div class="card">
 
-<h2>Confidence</h2>
+<h2>Routing Confidence</h2>
 
 <p>
 <strong>Score:</strong>
@@ -1003,11 +1005,9 @@ Status: {status}
                 ".webp",
             }:
 
-                relative_path = (
-                    self._relative_evidence_path(
-                        evidence_path,
-                        path_parent,
-                    )
+                image_src = self._evidence_image_src(
+                    evidence_path,
+                    path_parent,
                 )
 
                 blocks.append(
@@ -1019,7 +1019,7 @@ Status: {status}
 
 <img
     class="evidence"
-    src="{self._escape(relative_path)}"
+    src="{self._escape(image_src)}"
     alt="SatQuery AI visual evidence">
 """
                 )
@@ -1042,6 +1042,62 @@ Status: {status}
             )
 
         return "".join(blocks)
+
+    def _evidence_image_src(
+        self,
+        evidence_path: str,
+        report_dir: Path,
+    ) -> str:
+        """Return a self-contained image source for portable HTML reports."""
+        resolved = self._resolve_evidence_file(
+            evidence_path,
+            report_dir,
+        )
+
+        if resolved is not None:
+            try:
+                mime = (
+                    mimetypes.guess_type(
+                        resolved.name
+                    )[0]
+                    or "application/octet-stream"
+                )
+                payload = base64.b64encode(
+                    resolved.read_bytes()
+                ).decode("ascii")
+                return f"data:{mime};base64,{payload}"
+            except Exception:
+                pass
+
+        return self._relative_evidence_path(
+            evidence_path,
+            report_dir,
+        )
+
+    @staticmethod
+    def _resolve_evidence_file(
+        evidence_path: str,
+        report_dir: Path,
+    ) -> Optional[Path]:
+        raw = Path(evidence_path)
+        candidates = []
+
+        if raw.is_absolute():
+            candidates.append(raw)
+        else:
+            candidates.append(report_dir.parent / raw)
+            candidates.append(Path.cwd() / raw)
+            candidates.append(report_dir / raw)
+
+        for candidate in candidates:
+            try:
+                candidate = candidate.resolve()
+                if candidate.is_file():
+                    return candidate
+            except Exception:
+                continue
+
+        return None
 
     @staticmethod
     def _relative_evidence_path(
