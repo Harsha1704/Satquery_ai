@@ -40,6 +40,9 @@ let satelliteFallbackActive = false;
 let activeJobId = null;
 let currentAnalysisId = null;
 let cancellationRequested = false;
+// Every AOI/query submission owns a monotonically increasing token.  Network
+// responses from an older token are never allowed to update the current map.
+let activeRunToken = 0;
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -85,7 +88,7 @@ function mapPadding() {
   const commandVisible = !document.body.classList.contains("map-focused");
   const sidebar = commandVisible ? document.querySelector(".command-panel").offsetWidth : 0;
   return mobile ? {top:110, bottom:commandVisible ? Math.round(map.getContainer().clientHeight * .59) : 45, left:30, right:45}
-    : {top:120,bottom:90,left:sidebar + 40,right:document.body.classList.contains("insights-open") ? 430 : 70};
+    : {top:120,bottom:90,left:sidebar + 40,right:document.body.classList.contains("insights-open") ? $("insightsPanel").offsetWidth + 30 : 70};
 }
 
 $("toggleCommandBtn").addEventListener("click", () => {
@@ -316,11 +319,32 @@ function renderAoi() {
 
 function saveAoi(feature) {
   if (feature && drawMode && window.innerWidth <= 760) setMapFocus(false);
+  invalidateAnalysisForInputChange("The AOI changed. Any result for the previous area was invalidated.");
   currentAoi = feature || null;
   persistAoi();
+  renderAoi();
+}
+
+function invalidateAnalysisForInputChange(message) {
+  const staleJobId = activeJobId;
+  activeRunToken += 1;
+  activeJobId = null;
+  currentAnalysisId = null;
+  currentPlanPayload = null;
+  cancellationRequested = false;
   clearAnalysisOverlay();
   resetResultPanel();
-  renderAoi();
+
+  // Cancellation is best effort.  The token above is the correctness guard:
+  // even if a worker finishes after cancellation, its response is stale.
+  if (staleJobId) {
+    fetch(`${API_BASE}/api/v1/map/jobs/${encodeURIComponent(staleJobId)}`, {method:"DELETE"})
+      .catch(() => {});
+  }
+  if (message) {
+    setBackendStatus(message, "standby");
+    els.mapHint.textContent = message;
+  }
 }
 
 function setPreview(feature) {
@@ -543,6 +567,7 @@ function renderPlan(payload) {
 }
 
 function resetResultPanel() {
+  document.body.classList.remove("analysis-ready");
   currentJob = null;
   overlayArtifact = null;
   els.resultSection.classList.add("hidden");
@@ -895,10 +920,26 @@ function renderAnalysisLegend(job, artifact) {
 function evidenceBounds(job, artifact) {
   const records = job?.result?.provenance?.evidence_identity;
   const record = Array.isArray(records) ? records.find((item) => item.analysis_id === job.job_id && item.path === artifact) : null;
+  const validBounds = (item) => {
+    const b = item?.bounds;
+    return item?.georeferenced && String(item.crs || "").toUpperCase() === "EPSG:4326"
+      && Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v))
+      && b[0] >= -180 && b[2] <= 180 && b[1] >= -90 && b[3] <= 90 && b[0] < b[2] && b[1] < b[3] ? b : null;
+  };
   if (!record) return null;
-  if (record.georeferenced && String(record.crs || "").toUpperCase() === "EPSG:4326" && Array.isArray(record.bounds) && record.bounds.length === 4) return record.bounds;
-  if (!record.georeferenced && record.spatial_reference === job?.result?.provenance?.analysis_context?.result_id) {
-    return job.result.provenance.analysis_context?.roi?.display_bounds_wgs84 || null;
+  const direct = validBounds(record);
+  if (direct) return direct;
+  // Compatibility for existing GEE jobs: the scene renderer preserves the
+  // complete RGB GeoTIFF extent. Require a unique same-job, same-year source.
+  const scene = /^outputs\/evidence\/scene_(\d{4})_rgb\.png$/.exec(artifact);
+  if (scene) {
+    const sources = records.filter((item) => item.analysis_id === job.job_id
+      && new RegExp(`^imagery/gee_${scene[1]}_[^/]+\\.tif$`).test(item.path));
+    const transform = sources[0]?.transform;
+    if (sources.length === 1 && Array.isArray(transform)
+        && transform[0] > 0 && transform[4] < 0 && transform[1] === 0 && transform[3] === 0) {
+      return validBounds(sources[0]);
+    }
   }
   return null;
 }
@@ -907,9 +948,20 @@ function showEvidenceOnMap(job, artifact) {
   if (!job || job.job_id !== currentAnalysisId) return;
   const identities = job?.result?.provenance?.evidence_identity;
   if (Array.isArray(identities) && !identities.some((item) => item.analysis_id === currentAnalysisId && item.path === artifact)) return;
-  if (!artifact || !map?.isStyleLoaded()) return;
+  if (!artifact) return;
+  if (artifact === comparisonData(job)?.comparison_artifact) { openComparison(); return; }
+  // The composited comparison preview may have resampled pixels; use its
+  // authoritative change layer for geographic display instead.
+  if (artifact === comparisonData(job)?.change_artifact) {
+    const layerArtifact = taskLayerStats(job)?.artifact;
+    if (layerArtifact && evidenceBounds(job, layerArtifact)) artifact = layerArtifact;
+  }
   const bbox = evidenceBounds(job, artifact);
-  if (!bbox) return;
+  if (!bbox) { openEvidencePreview(job, artifact); return; }
+  if (!map?.isStyleLoaded()) {
+    els.mapHint.textContent = "Map is loading. Please select the image again in a moment.";
+    return;
+  }
   const [w,s,e,n] = bbox;
   clearAnalysisOverlay();
   map.addSource(ANALYSIS_SOURCE, {
@@ -923,13 +975,27 @@ function showEvidenceOnMap(job, artifact) {
     id:ANALYSIS_LAYER,
     type:"raster",
     source:ANALYSIS_SOURCE,
-    paint:{"raster-opacity":primaryTask?.64:.68,"raster-fade-duration":180}
-  });
+    paint:{"raster-opacity":primaryTask ? .8 : 1,"raster-fade-duration":0}
+  }, map.getLayer(AOI_LINE) ? AOI_LINE : undefined);
   overlayArtifact = artifact;
   els.analysisLayerToggle.checked = true;
   els.activeLayerLabel.textContent = evidenceLabel(artifact);
   els.mapHint.textContent = `${primaryTask ? "PRIMARY DETECTED-CHANGE LAYER" : evidenceRole(artifact)}: ${evidenceLabel(artifact)}`;
   renderAnalysisLegend(job, artifact);
+  document.querySelectorAll(".evidence-item, .comparison-card").forEach((button) => {
+    const selected = button.dataset.artifact === artifact
+      || (primaryTask && button.dataset.artifact === comparisonData(job)?.change_artifact);
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function openEvidencePreview(job, artifact) {
+  const dialog = $("evidencePreview");
+  $("evidencePreviewTitle").textContent = evidenceLabel(artifact);
+  $("evidencePreviewImg").src = artifactUrl(job.job_id, artifact);
+  $("evidencePreviewImg").alt = evidenceLabel(artifact);
+  dialog.showModal();
 }
 
 function showTemporalChangePolygons(job) {
@@ -1040,6 +1106,45 @@ function openComparison() {
   els.mapComparison.classList.remove("hidden");
 }
 
+function renderPredictionStatistics(job, profile) {
+  const layer = taskLayerStats(job);
+  const readPercent = (value) => value == null || value === "" ? null :
+    (Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100 ? Number(value) : null);
+  const gain = readPercent(layer?.positive_percentage);
+  const loss = readPercent(layer?.negative_percentage);
+  const changed = readPercent(layer?.changed_percentage);
+  const stable = changed == null ? null : 100 - changed;
+  const format = (value) => value == null ? "Unavailable" : `${value.toFixed(1)}%`;
+  $("predictionGain").textContent = format(gain);
+  $("predictionLoss").textContent = format(loss);
+  $("predictionStable").textContent = format(stable);
+  const area = (value) => value == null || !Number.isFinite(Number(value)) || Number(value) < 0
+    ? "" : `${Math.round(Number(value) * 1e6).toLocaleString()} m²`;
+  $("predictionGainArea").textContent = area(layer?.positive_area_km2);
+  $("predictionLossArea").textContent = area(layer?.negative_area_km2);
+  $("predictionStableArea").textContent = area(layer?.valid_area_km2 != null && layer?.affected_area_km2 != null
+    ? layer.valid_area_km2 - layer.affected_area_km2 : null);
+  const label = {vegetation:"Vegetation", urban:"Built-up signal", water:"Water", flood:"Water"}[profile.key] || "Signal";
+  $("predictionGainLabel").textContent = `${label} gain`;
+  $("predictionLossLabel").textContent = `${label} loss`;
+  const net = gain == null || loss == null ? null : gain - loss;
+  $("predictionNet").textContent = net == null ? "Unavailable" : `${net > 0 ? "+" : ""}${net.toFixed(1)} pp`;
+  $("predictionNet").classList.toggle("negative", net != null && net < 0);
+  $("predictionNote").textContent = layer?.note || (layer
+    ? "Percentages describe valid analyzed pixels. Net change is gain minus loss in percentage points."
+    : "Directional change measurements were not returned for this analysis.");
+}
+
+document.querySelectorAll("[data-result-target]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-result-target]").forEach((tab) => tab.classList.toggle("active", tab === button));
+    const target = $(button.dataset.resultTarget);
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target?.scrollIntoView({behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"nearest"});
+    if (button.dataset.resultTarget === "technicalDetails") els.generateReportBtn.focus({preventScroll:true});
+  });
+});
+
 function renderAnalysisResult(payload) {
   const job = payload?.job;
   if (!job || job.status !== "completed" || !job.result) return;
@@ -1055,6 +1160,11 @@ function renderAnalysisResult(payload) {
   const changeStats = job.result.statistics?.change || {};
   const quality = qualityStatus(job);
   const headline = headlineMetrics(job, profile);
+
+  document.body.classList.add("analysis-ready");
+  $("resultQuery").textContent = parsed.query || els.query.value;
+  $("resultContext").textContent = [years.join(" → "), actualSource.label, actualSource.meta].filter(Boolean).join(" · ");
+  renderPredictionStatistics(job, profile);
 
   els.resultTitle.textContent = profile.title;
   els.resultPeriod.textContent = years.length ? years.join(" → ") : "Current scene";
@@ -1112,6 +1222,10 @@ function renderAnalysisResult(payload) {
 }
 
 function renderFailure(payload, fallbackMessage) {
+  document.body.classList.remove("analysis-ready");
+  $("resultQuery").textContent = "";
+  $("resultContext").textContent = "";
+  renderPredictionStatistics(null, {key:"general"});
   const job = payload?.job;
   currentJob = job || null;
   els.resultSection.classList.remove("hidden");
@@ -1142,14 +1256,14 @@ function renderFailure(payload, fallbackMessage) {
   els.generateReportBtn.disabled = true;
 }
 
-async function planQuery(query) {
+async function planQuery(query, aoi) {
   workflowMark("query","active");
   const response = await fetch(`${API_BASE}/api/v1/map/context`, {
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
       query,
-      aoi:currentAoi,
+      aoi,
       client:{source:"satquery-industry-workspace",map_center:{longitude:map.getCenter().lng,latitude:map.getCenter().lat},zoom:map.getZoom()}
     })
   });
@@ -1159,11 +1273,11 @@ async function planQuery(query) {
   return payload;
 }
 
-async function submitAnalysisJob(query, planFingerprint = null) {
+async function submitAnalysisJob(query, aoi, planFingerprint = null) {
   const response = await fetch(`${API_BASE}/api/v1/map/jobs`, {
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({query,aoi:currentAoi,plan_fingerprint:planFingerprint})
+    body:JSON.stringify({query,aoi,plan_fingerprint:planFingerprint})
   });
   const payload = await response.json().catch(()=>({}));
   if (!response.ok) throw new Error(payload?.detail || payload?.error || `Job submission HTTP ${response.status}`);
@@ -1241,6 +1355,10 @@ async function sendAoiAndQuery() {
   const query=(els.query.value||"").trim();
   if (!currentAoi) { setBackendStatus("Draw an AOI before running the analysis.","error"); return; }
   if (!query) { setBackendStatus("Enter a natural-language question.","error"); els.query.focus(); return; }
+  // Snapshot the upstream inputs before any asynchronous request starts.  The
+  // planner and job submission therefore receive the exact same AOI.
+  const submittedAoi = JSON.parse(JSON.stringify(currentAoi));
+  const runToken = ++activeRunToken;
   setInsights(true);
 
   clearAnalysisOverlay();
@@ -1258,7 +1376,8 @@ async function sendAoiAndQuery() {
   els.mapHint.textContent="SatQuery AI is understanding your question…";
 
   try {
-    const planPayload = await planQuery(query);
+    const planPayload = await planQuery(query, submittedAoi);
+    if (runToken !== activeRunToken) return;
     currentPlanPayload = planPayload;
     workflowMark("query","done");
     workflowMark("aoi","done");
@@ -1269,14 +1388,15 @@ async function sendAoiAndQuery() {
 
     let submitted;
     try {
-      submitted = await submitAnalysisJob(query, planPayload.plan_fingerprint || planPayload?.plan?.fingerprint || null);
+      submitted = await submitAnalysisJob(query, submittedAoi, planPayload.plan_fingerprint || planPayload?.plan?.fingerprint || null);
     } catch (error) {
       if (String(error.message||"").toLowerCase().includes("plan changed")) {
         setBackendStatus("Imagery availability changed after preview. Refreshing the executable plan once…","running");
-        const refreshedPlan = await planQuery(query);
+        const refreshedPlan = await planQuery(query, submittedAoi);
+        if (runToken !== activeRunToken) return;
         currentPlanPayload = refreshedPlan;
         renderPlan(refreshedPlan);
-        submitted = await submitAnalysisJob(query, refreshedPlan.plan_fingerprint || refreshedPlan?.plan?.fingerprint || null);
+        submitted = await submitAnalysisJob(query, submittedAoi, refreshedPlan.plan_fingerprint || refreshedPlan?.plan?.fingerprint || null);
       } else {
         throw error;
       }
@@ -1290,7 +1410,7 @@ async function sendAoiAndQuery() {
     workflowFromJobState(submitted);
 
     const state = await pollAnalysisJob(activeJobId);
-    if (state.job_id && state.job_id !== currentAnalysisId) return;
+    if (runToken !== activeRunToken || (state.job_id && state.job_id !== currentAnalysisId)) return;
     if (state.status !== "completed" || !state.job?.result) {
       renderFailure({job:state.job}, state.message || (state.status === "cancelled" ? "Analysis cancelled." : "Analysis did not complete."));
       setBackendStatus(state.status === "cancelled" ? "Analysis cancelled." : "Analysis stopped because execution or evidence requirements were not met.","error");
@@ -1302,15 +1422,18 @@ async function sendAoiAndQuery() {
     setBackendStatus("Analysis completed. Evidence, statistics and report are ready.","completed");
     els.mapHint.textContent="Analysis complete. Evidence is displayed on the map.";
   } catch (error) {
+    if (runToken !== activeRunToken) return;
     console.error("SatQuery map analysis error", error);
     renderFailure(null,error.message);
     setBackendStatus(`Analysis failed: ${error.message}`,"error");
     els.mapHint.textContent="Analysis failed. Review the error details; unsupported tasks are not simulated.";
   } finally {
-    activeJobId=null;
-    cancellationRequested=false;
-    els.send.disabled=false;
-    els.send.querySelector("span:first-child").textContent="Analyze with SatQuery AI";
+    if (runToken === activeRunToken) {
+      activeJobId=null;
+      cancellationRequested=false;
+      els.send.disabled=false;
+      els.send.querySelector("span:first-child").textContent="Analyze with SatQuery AI";
+    }
   }
 }
 
@@ -1464,6 +1587,7 @@ function bindMapDrawing() {
 }
 
 function initializeMap() {
+  if (window.innerWidth <= 760) setInsights(false);
   if (typeof maplibregl === "undefined") { setSystemState("MapLibre failed to load","error"); return; }
   restoreState();
   map=new maplibregl.Map({container:"map",style:BASE_STYLE_URL,center:DEFAULT_CENTER,zoom:DEFAULT_ZOOM,pitch:0,bearing:0,antialias:true,maxZoom:19,attributionControl:true});

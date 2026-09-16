@@ -160,13 +160,20 @@ def validate_spatial_consistency(context: dict[str, Any], evidence: list[dict[st
         if check["status"] == "FAIL": failures.append(check.get("code", "AOI_SOURCE_INVALID"))
         elif check["status"] == "WARNING": warnings.append("Only part of the requested AOI is covered by a source image.")
     roi, result = context.get("roi", {}), context.get("result", {})
-    roi_result_ok = result.get("analysis_id") == context.get("analysis_id") and result.get("roi_id") == roi.get("roi_id") and bool(result.get("crs") or not context.get("aoi"))
+    roi_result_ok = (result.get("analysis_id") == context.get("analysis_id")
+                     and result.get("roi_id") == roi.get("roi_id")
+                     and bool(result.get("crs") or not context.get("aoi"))
+                     and result.get("crs") == roi.get("crs")
+                     and result.get("bounds") == roi.get("bounds"))
     checks["roi_result"] = {"status": "PASS" if roi_result_ok else "FAIL", "crs_match": result.get("crs") == roi.get("crs"), "bounds_match": result.get("bounds") == roi.get("bounds")}
     if not roi_result_ok: failures.append("RESULT_ROI_MISMATCH")
     evidence_checks = []
     for item in evidence:
         linked = item.get("analysis_id") == context.get("analysis_id") and item.get("result_id") == result.get("result_id") and item.get("roi_id") == roi.get("roi_id")
         spatial_ok = (item.get("georeferenced") and item.get("crs") and item.get("bounds")) or (not item.get("georeferenced") and item.get("spatial_reference") == result.get("result_id"))
+        if item.get("georeferenced") and context.get("aoi"):
+            geometry_check, _ = _geometry_checks(context["aoi"], item)
+            spatial_ok = geometry_check["status"] == "PASS"
         status = "PASS" if linked and spatial_ok else "FAIL"
         evidence_checks.append({"evidence_id": item.get("evidence_id"), "status": status, "analysis_id_match": item.get("analysis_id") == context.get("analysis_id"), "result_id_match": item.get("result_id") == result.get("result_id"), "spatial_reference_valid": spatial_ok})
         if status == "FAIL": failures.append("EVIDENCE_RESULT_MISMATCH")

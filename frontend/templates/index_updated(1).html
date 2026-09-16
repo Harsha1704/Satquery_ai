@@ -30,7 +30,7 @@
         {% if id == 'map' %}
         <a class="top-link" href="{{ url_for('map_view') }}">{{ icon(glyph) }}<span>{{ label }}</span></a>
         {% elif id == 'why' %}
-        <a class="top-link" href="{{ url_for('why_satquery') }}">{{ icon(glyph) }}<span>{{ label }}</span></a>
+        <a class="top-link" href="/why-satquery">{{ icon(glyph) }}<span>{{ label }}</span></a>
         {% else %}
         <button class="top-link {{ 'active' if id == 'analyze' }}" data-view="{{ id }}" type="button" {{ 'aria-current=page' if id == 'analyze' }}>{{ icon(glyph) }}<span>{{ label }}</span></button>
         {% endif %}
@@ -123,3 +123,4 @@
 <div id="toast" class="toast hidden" role="status"></div>
 </body>
 </html>
+

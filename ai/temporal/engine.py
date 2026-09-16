@@ -73,10 +73,15 @@ class TemporalChangeEngine:
             right=min(before.bounds.right,after_bounds_in_before[2]); top=min(before.bounds.top,after_bounds_in_before[3])
             if left>=right or bottom>=top: raise ValueError("NO_SPATIAL_OVERLAP")
             window=from_bounds(left,bottom,right,top,transform=before.transform).round_offsets().round_lengths()
-            before_data=before.read(window=window).astype("float32"); roi_transform=before.window_transform(window)
+            if before.count != after.count:
+                raise ValueError("INCOMPATIBLE_BANDS: temporal rasters must have matching band counts")
+            if any(a and b and a != b for a, b in zip(before.descriptions, after.descriptions)):
+                raise ValueError("INCOMPATIBLE_BANDS: temporal band descriptions differ")
+            before_data=before.read(window=window, masked=True).astype("float32").filled(np.nan); roi_transform=before.window_transform(window)
             after_data=np.full((after.count,before_data.shape[1],before_data.shape[2]),np.nan,dtype="float32")
             for index in range(min(before.count,after.count)):
-                reproject(after.read(index+1),after_data[index],src_transform=after.transform,src_crs=after.crs,dst_transform=roi_transform,dst_crs=before.crs,resampling=Resampling.bilinear,dst_nodata=np.nan)
+                source = after.read(index+1, masked=True).astype("float32").filled(np.nan)
+                reproject(source,after_data[index],src_transform=after.transform,src_crs=after.crs,dst_transform=roi_transform,dst_crs=before.crs,resampling=Resampling.bilinear,src_nodata=np.nan,dst_nodata=np.nan)
             count=min(before.count,after.count); before_data=before_data[:count];after_data=after_data[:count]
             valid=np.all(np.isfinite(before_data)&np.isfinite(after_data),axis=0)
             if before.nodata is not None: valid &= np.all(before_data != before.nodata,axis=0)
@@ -89,11 +94,13 @@ class TemporalChangeEngine:
             score_range=float(np.ptp(score[valid]))
             threshold=_otsu(score[valid]) if score_range > 1e-9 else None
             mask=((score>=threshold)&valid) if threshold is not None else np.zeros_like(valid, dtype=bool)
-            mask=ndimage.binary_opening(mask);mask=ndimage.binary_closing(mask)
+            mask=ndimage.binary_opening(mask);mask=ndimage.binary_closing(mask) & valid
             labels,count_objects=ndimage.label(mask); sizes=np.bincount(labels.ravel()); mask &= sizes[labels]>=minimum_component_pixels
             labels,count_objects=ndimage.label(mask)
             changed=int(mask.sum()); total=int(valid.sum()); transform=roi_transform; crs=str(before.crs); bounds=[float(x) for x in rasterio.transform.array_bounds(before_data.shape[1],before_data.shape[2],transform)]
             warnings=[]
+            if threshold is None and np.any(spectral[valid] > 1e-9):
+                raise ValueError("UNRESOLVED_UNIFORM_CHANGE: a constant nonzero difference cannot be classified by adaptive thresholding")
             valid_coverage=valid.sum()*100/mask.size
             if valid_coverage < 80: warnings.append("Valid comparison coverage is below 80%; interpret areas outside the effective common grid as unavailable.")
             if before.count != after.count: warnings.append("The input band counts differ; only their shared leading bands were compared.")

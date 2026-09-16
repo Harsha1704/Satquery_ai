@@ -98,6 +98,8 @@ class AOI(Contract):
     def validate_polygon(self):
         if not self.coordinates:
             raise ValueError("AOI polygon requires at least one ring.")
+        if len(self.coordinates) > 100 or sum(map(len, self.coordinates)) > 10000:
+            raise ValueError("AOI exceeds the limit of 100 rings or 10000 positions.")
 
         for ring_index, ring in enumerate(self.coordinates):
             if len(ring) < 4:
@@ -116,27 +118,15 @@ class AOI(Contract):
         if max(xs) - min(xs) >= 180:
             raise ValueError("Antimeridian-spanning AOIs are not supported by this interactive workflow.")
 
-        # Lightweight nonzero-area test in lon/lat space. Earth Engine performs
-        # the geodesic area calculation later for final statistics.
-        area2 = 0.0
-        for a, b in zip(outer, outer[1:]):
-            area2 += a[0] * b[1] - b[0] * a[1]
-        # Reject bow-tie polygons early.  The test is deliberately small and
-        # dependency-free; adjacent edges share a vertex and are excluded.
-        def orientation(a, b, c):
-            return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-        def intersects(a, b, c, d):
-            o1, o2 = orientation(a, b, c), orientation(a, b, d)
-            o3, o4 = orientation(c, d, a), orientation(c, d, b)
-            return o1 * o2 < 0 and o3 * o4 < 0
-        edges = list(zip(outer, outer[1:]))
-        for index, (a, b) in enumerate(edges):
-            for other, (c, d) in enumerate(edges[index + 1:], start=index + 1):
-                if other in {index + 1, len(edges) - 1 if index == 0 else -1}:
-                    continue
-                if intersects(a, b, c, d):
-                    raise ValueError("AOI polygon self-intersects.")
-        if abs(area2) < 1e-12:
+        from shapely.geometry import Polygon
+        from shapely.validation import explain_validity
+        polygon = Polygon(outer, self.coordinates[1:])
+        if not polygon.is_valid:
+            reason = explain_validity(polygon)
+            if "intersection" in reason.lower():
+                raise ValueError("AOI polygon self-intersects: " + reason)
+            raise ValueError("Invalid AOI polygon: " + reason)
+        if polygon.area <= 0:
             raise ValueError("AOI polygon area is effectively zero.")
         return self
 

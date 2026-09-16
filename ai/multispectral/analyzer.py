@@ -36,10 +36,10 @@ class MultispectralAnalyzer:
         data: np.ndarray
     ) -> np.ndarray:
 
-        data = np.asarray(
+        data = np.ma.asarray(
             data,
             dtype=np.float32
-        )
+        ).filled(np.nan)
 
         if data.ndim != 3:
             raise ValueError(
@@ -191,9 +191,9 @@ class MultispectralAnalyzer:
                 indices["ndbi"]
             ),
             "vegetation_coverage_percent":
-                float(np.mean(vegetation) * 100),
+                float(np.mean(vegetation[np.isfinite(indices["ndvi"])]) * 100),
             "water_coverage_percent":
-                float(np.mean(water) * 100),
+                float(np.mean(water[np.isfinite(indices["ndwi"])]) * 100),
             "built_up_coverage_percent":
-                float(np.mean(built_up) * 100),
+                float(np.mean(built_up[np.isfinite(indices["ndbi"])]) * 100),
         }

@@ -252,7 +252,7 @@ class MultispectralLoader:
 
         with rasterio.open(path) as src:
 
-            data = src.read()
+            data = src.read(masked=True).astype(np.float32).filled(np.nan)
 
             height = src.height
             width = src.width

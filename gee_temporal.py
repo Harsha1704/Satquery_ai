@@ -690,14 +690,9 @@ def fetch_task_change_evidence(
 
     west, south, east, north = [float(x) for x in bounds_wgs84]
     if aoi_coordinates:
-        try:
-            region = ee.Geometry.Polygon(
-                aoi_coordinates, proj="EPSG:4326", geodesic=False
-            )
-        except Exception:
-            region = ee.Geometry.Rectangle(
-                [west, south, east, north], proj="EPSG:4326", geodesic=False
-            )
+        region = ee.Geometry.Polygon(
+            aoi_coordinates, proj="EPSG:4326", geodesic=False
+        )
     else:
         region = ee.Geometry.Rectangle(
             [west, south, east, north], proj="EPSG:4326", geodesic=False
@@ -784,6 +779,8 @@ def fetch_task_change_evidence(
         return max(0.0, value / 1_000_000.0)
 
     valid_area = area_km2("valid_area")
+    if valid_area <= 0:
+        raise NoImageryError("No valid overlapping pixels inside the requested AOI.")
     positive_area = area_km2("positive_area")
     negative_area = area_km2("negative_area")
     changed_area = area_km2("changed_area")
@@ -830,7 +827,8 @@ def fetch_task_change_evidence(
     out_path = output_dir / filename
 
     thumb_params = {
-        "region": region,
+        "region": ee.Geometry.Rectangle([west, south, east, north], proj="EPSG:4326", geodesic=False),
+        "crs": "EPSG:4326",
         "dimensions": f"{int(plan.width_px)}x{int(plan.height_px)}",
         "format": "png",
     }
@@ -839,11 +837,7 @@ def fetch_task_change_evidence(
     response.raise_for_status()
     out_path.write_bytes(response.content)
 
-    try:
-        exact_aoi_area_km2 = max(0.0, float(region.area(maxError=1).getInfo()) / 1_000_000.0)
-    except Exception:
-        width_km, height_km = bbox_size_km(bounds_wgs84)
-        exact_aoi_area_km2 = max(0.0, width_km * height_km)
+    exact_aoi_area_km2 = max(0.0, float(region.area(maxError=1).getInfo()) / 1_000_000.0)
     coverage_pct = (valid_area / exact_aoi_area_km2 * 100.0) if exact_aoi_area_km2 > 0 else None
 
     return {
@@ -1402,4 +1396,3 @@ def build_change_narrative(
     return assessment["answer"]
 
 # === END SATQUERY HISTORICAL CHANGE ASSESSMENT V2 ===
-

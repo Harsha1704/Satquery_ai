@@ -9,17 +9,8 @@ class SpectralIndices:
         band_b: np.ndarray
     ) -> np.ndarray:
 
-        a = band_a.astype(np.float32)
-        b = band_b.astype(np.float32)
-
-        denominator = a + b
-
-        return np.divide(
-            a - b,
-            denominator,
-            out=np.zeros_like(denominator),
-            where=denominator != 0
-        )
+        from ai.multispectral.indices import normalized_difference
+        return normalized_difference(band_a, band_b)
 
     def ndvi(
         self,

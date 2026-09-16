@@ -1,0 +1,93 @@
+{% macro icon(name, class='') -%}<svg class="icon {{ class }}" aria-hidden="true"><use href="{{ url_for('static', filename='images/icons.svg') }}#{{ name }}"></use></svg>{%- endmacro %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#020f1b">
+  <title>Why SatQuery AI · Earth Intelligence for Everyone</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/why-satquery.css') }}">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <a class="brand" href="/" aria-label="SatQuery AI home">
+    <span class="brand-mark">SQ</span>
+    <span><strong>SatQuery <b>AI</b></strong><small>EARTH OBSERVATORY</small></span>
+  </a>
+  <nav aria-label="Main navigation">
+    <a href="/">Analyze</a><a href="/map-view">Explore Earth</a><a class="active" href="/why-satquery">Why SatQuery</a><a href="/map-view#reports">Reports</a>
+  </nav>
+  <a class="header-cta" href="/map-view">Open Earth Workspace <span>↗</span></a>
+</header>
+
+<main id="main">
+  <section class="hero section-shell">
+    <div class="hero-copy">
+      <p class="eyebrow"><span></span> WHY SATQUERY AI</p>
+      <h1>Earth observation should answer <em>questions</em>, not create more work.</h1>
+      <p class="hero-lead">SatQuery AI turns a selected place and a natural-language question into a traceable remote-sensing workflow—connecting imagery, analysis, spatial evidence, statistics and an understandable answer in one investigation.</p>
+      <div class="hero-actions"><a class="primary" href="/map-view">Explore a place <span>↗</span></a><a class="secondary" href="#difference">See what changes</a></div>
+      <div class="truth-strip"><span>WORLDWIDE AOI</span><i></i><span>MULTIMODAL</span><i></i><span>EVIDENCE-FIRST</span><i></i><span>TRACEABLE WORKFLOWS</span></div>
+    </div>
+    <div class="orbit-card" aria-label="SatQuery workflow illustration">
+      <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
+      <div class="planet"><span>SELECT<br><b>ANY AREA</b></span></div>
+      <div class="node n1"><b>01</b><span>Ask</span></div><div class="node n2"><b>02</b><span>Plan</span></div><div class="node n3"><b>03</b><span>Analyze</span></div><div class="node n4"><b>04</b><span>Explain</span></div>
+    </div>
+  </section>
+
+  <section class="statement section-shell">
+    <p class="section-kicker">THE GAP</p>
+    <h2>Satellite data is abundant.<br><span>Usable answers are not.</span></h2>
+    <p>Many Earth-observation workflows still make users discover datasets, understand sensors, choose algorithms, preprocess imagery, compare dates, inspect outputs and interpret the result as separate steps. SatQuery is designed to connect those steps around the user's actual question and selected geography.</p>
+  </section>
+
+  <section id="difference" class="difference section-shell">
+    <div class="section-heading"><div><p class="section-kicker">WHAT CHANGES</p><h2>From tool-driven analysis<br>to question-driven intelligence.</h2></div><p>We do not need to name other platforms to explain the difference. The distinction is in how the workflow behaves.</p></div>
+    <div class="comparison">
+      <article class="comparison-card conventional"><p class="card-tag">CONVENTIONAL WORKFLOW</p><h3>The user assembles the analysis</h3><div class="flow-list"><span>Find a dataset</span><span>Choose scenes and dates</span><span>Prepare imagery</span><span>Select an algorithm</span><span>Interpret maps and numbers</span><span>Build the final explanation</span></div></article>
+      <div class="versus">→</div>
+      <article class="comparison-card satquery"><p class="card-tag">SATQUERY WORKFLOW</p><h3>The question assembles the workflow</h3><div class="flow-list"><span>Select the place</span><span>Ask in natural language</span><span>System plans approved tools</span><span>Imagery and modalities are validated</span><span>Evidence and statistics stay spatially linked</span><span>Answer, map and report arrive together</span></div></article>
+    </div>
+  </section>
+
+  <section class="capabilities section-shell">
+    <div class="section-heading"><div><p class="section-kicker">WHY IT FEELS DIFFERENT</p><h2>One investigation.<br><span>Multiple forms of evidence.</span></h2></div></div>
+    <div class="feature-grid">
+      <article><b>01</b><h3>Ask, don't script</h3><p>Start with a question about a place instead of starting with a processing tool.</p></article>
+      <article><b>02</b><h3>Area-aware by design</h3><p>The selected AOI, analyzed area, statistics, evidence and displayed result are designed to stay consistent.</p></article>
+      <article><b>03</b><h3>Temporal reasoning</h3><p>Compare observations across time and connect change evidence to the exact analyzed geography.</p></article>
+      <article><b>04</b><h3>Multimodal workflows</h3><p>Route tasks across optical, multispectral, temporal and SAR-oriented analysis as supported capabilities become available.</p></article>
+      <article><b>05</b><h3>Evidence before explanation</h3><p>Answers are paired with visual layers, measurements, source information and quality limitations.</p></article>
+      <article><b>06</b><h3>Traceable decisions</h3><p>Expose why a workflow was selected, what data and tools were used, and where confidence or reliability is limited.</p></article>
+    </div>
+  </section>
+
+  <section class="people section-shell">
+    <div class="section-heading"><div><p class="section-kicker">WHO BENEFITS</p><h2>Built for people who need to<br><span>understand a place quickly.</span></h2></div><p>SatQuery reduces the distance between a real-world question and defensible Earth-observation evidence.</p></div>
+    <div class="people-grid">
+      <article><span class="persona">PUBLIC & DISASTER TEAMS</span><h3>See where conditions changed</h3><p>Use temporal and spatial evidence to support flood, land-change and impact assessment workflows without beginning from raw imagery alone.</p><small>Change maps · area statistics · reports</small></article>
+      <article><span class="persona">AGRICULTURE & LAND TEAMS</span><h3>Track vegetation and land signals</h3><p>Investigate vegetation condition, land-cover signals and changes within a selected field or region using multispectral evidence.</p><small>NDVI · temporal comparison · AOI evidence</small></article>
+      <article><span class="persona">URBAN & INFRASTRUCTURE TEAMS</span><h3>Investigate growth and surface change</h3><p>Compare places over time, locate change regions and review evidence that may indicate development or land transformation.</p><small>Change objects · built-up signals · map layers</small></article>
+      <article><span class="persona">RESEARCHERS & ANALYSTS</span><h3>Move faster from question to evidence</h3><p>Use a common interface for imagery inspection, model/tool routing, provenance, visual evidence and reproducible analysis outputs.</p><small>Execution trace · provenance · evidence package</small></article>
+      <article><span class="persona">ENVIRONMENT & CONSERVATION</span><h3>Monitor landscapes over time</h3><p>Explore vegetation, water and land-cover change with explicit dates, spatial context and limitations attached to the result.</p><small>Vegetation · water · multitemporal analysis</small></article>
+      <article><span class="persona">LEARNERS & NON-SPECIALISTS</span><h3>Explore Earth without learning every tool first</h3><p>Natural-language interaction makes remote-sensing analysis more approachable while still exposing the technical evidence behind an answer.</p><small>Natural language · explainability · guided workflow</small></article>
+    </div>
+  </section>
+
+  <section class="use-journey section-shell">
+    <p class="section-kicker">WHY PEOPLE MAY USE IT</p><h2>A question can begin with a place,<br><span>not a file format.</span></h2>
+    <div class="journey"><div><b>01</b><h3>Choose anywhere</h3><p>Search or draw the area that matters.</p></div><div><b>02</b><h3>Ask naturally</h3><p>“How has vegetation changed here?”</p></div><div><b>03</b><h3>Let the system plan</h3><p>Relevant data, checks and analysis are selected.</p></div><div><b>04</b><h3>Inspect the evidence</h3><p>Compare imagery, layers, statistics and quality.</p></div><div><b>05</b><h3>Share the result</h3><p>Use the map and report as an evidence package.</p></div></div>
+  </section>
+
+  <section class="principles section-shell">
+    <div><p class="section-kicker">DESIGN PRINCIPLE</p><h2>Not just an answer.<br><span>A reason to trust—or question—it.</span></h2></div>
+    <div class="principle-list"><p><b>01</b><span><strong>Evidence-grounded</strong>Analysis should show what supports the conclusion.</span></p><p><b>02</b><span><strong>Spatially consistent</strong>Results should correspond to the geography the user actually selected.</span></p><p><b>03</b><span><strong>Uncertainty-aware</strong>Unavailable model confidence or weak evidence should remain visible, not be converted into certainty.</span></p><p><b>04</b><span><strong>Human-readable</strong>Technical remote-sensing outputs should be understandable without hiding their scientific limitations.</span></p></div>
+  </section>
+
+  <section class="final-cta section-shell"><p class="section-kicker">EXPLORE THE EARTH DIFFERENTLY</p><h2>Select a place.<br>Ask what you want to know.</h2><p>SatQuery AI connects your question to satellite evidence, spatial analysis and an explainable result.</p><a class="primary" href="/map-view">Start an investigation <span>↗</span></a></section>
+</main>
+<footer><span>© 2026 SatQuery AI</span><span>Interactive Vision-Language Assistant for Multimodal Remote Sensing Analysis</span></footer>
+</body>
+</html>

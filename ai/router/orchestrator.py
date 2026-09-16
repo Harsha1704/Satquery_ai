@@ -2,6 +2,7 @@
 import re
 from threading import RLock
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import numpy as np
 
@@ -2185,63 +2186,8 @@ class SatQueryOrchestrator:
                 reverse=True,
             )
 
-            before_unknown = float(before_pct.get("unknown", 0.0))
-            after_unknown = float(after_pct.get("unknown", 0.0))
-            before_known = float(before_pct.get("known_total", 0.0))
-            after_known = float(after_pct.get("known_total", 0.0))
-
-            before_dominant_class = max(
-                land_classes,
-                key=lambda key: float(before_pct.get(key, 0.0)),
-            )
-            after_dominant_class = max(
-                land_classes,
-                key=lambda key: float(after_pct.get(key, 0.0)),
-            )
-            before_dominant_pct = float(before_pct.get(before_dominant_class, 0.0))
-            after_dominant_pct = float(after_pct.get(after_dominant_class, 0.0))
-            max_abs_delta = max(abs(float(value)) for value in deltas.values())
-
-            max_unknown_pct = 35.0
-            min_known_coverage_pct = 65.0
-            extreme_dominant_pct = 98.0
-            extreme_transition_pp = 50.0
-
-            reasons = []
-            if before_unknown > max_unknown_pct:
-                reasons.append(
-                    f"before-image unknown coverage is {before_unknown:.1f}% "
-                    f"(limit {max_unknown_pct:.1f}%)"
-                )
-            if after_unknown > max_unknown_pct:
-                reasons.append(
-                    f"after-image unknown coverage is {after_unknown:.1f}% "
-                    f"(limit {max_unknown_pct:.1f}%)"
-                )
-            if before_known < min_known_coverage_pct:
-                reasons.append(
-                    f"before-image known-class coverage is only {before_known:.1f}%"
-                )
-            if after_known < min_known_coverage_pct:
-                reasons.append(
-                    f"after-image known-class coverage is only {after_known:.1f}%"
-                )
-
-            extreme_dominance = max(before_dominant_pct, after_dominant_pct) >= extreme_dominant_pct
-            extreme_transition = max_abs_delta >= extreme_transition_pp
-            if extreme_dominance and extreme_transition:
-                reasons.append(
-                    "semantic output contains an extreme single-class prediction "
-                    "combined with an extreme temporal class shift"
-                )
-
-            reliable = len(reasons) == 0
-
-            score = 1.0
-            score -= min(0.65, max(before_unknown, after_unknown) / 100.0 * 0.75)
-            if extreme_dominance and extreme_transition:
-                score -= 0.25
-            quality_score = round(max(0.0, min(1.0, score)), 4)
+            quality_gate = cls._evaluate_semantic_quality(before_pct, after_pct, deltas)
+            reliable = quality_gate["passed"]
 
             return {
                 "available": True,
@@ -2255,24 +2201,7 @@ class SatQueryOrchestrator:
                     for key, value in ranked[:4]
                 ],
                 "quality_gate": {
-                    "passed": reliable,
-                    "score": quality_score,
-                    "reasons": reasons,
-                    "thresholds": {
-                        "max_unknown_pct": max_unknown_pct,
-                        "min_known_coverage_pct": min_known_coverage_pct,
-                        "extreme_dominant_pct": extreme_dominant_pct,
-                        "extreme_transition_pp": extreme_transition_pp,
-                    },
-                    "before_unknown_pct": round(before_unknown, 4),
-                    "after_unknown_pct": round(after_unknown, 4),
-                    "before_known_coverage_pct": round(before_known, 4),
-                    "after_known_coverage_pct": round(after_known, 4),
-                    "before_dominant_class": before_dominant_class,
-                    "before_dominant_pct": round(before_dominant_pct, 4),
-                    "after_dominant_class": after_dominant_class,
-                    "after_dominant_pct": round(after_dominant_pct, 4),
-                    "max_abs_class_delta_pp": round(max_abs_delta, 4),
+                    **quality_gate,
                 },
                 "model": type(model).__name__,
                 "note": (
@@ -2365,10 +2294,24 @@ class SatQueryOrchestrator:
         try:
             from PIL import Image
 
-            with Image.open(before_path) as image:
-                before_rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
-            with Image.open(after_path) as image:
-                after_rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
+            def read_rgb_and_validity(path_value: str):
+                path = Path(path_value)
+                if path.suffix.lower() in {".tif", ".tiff"}:
+                    import rasterio
+                    with rasterio.open(path) as dataset:
+                        if dataset.count < 3:
+                            raise ValueError("RGB support check requires at least three raster bands.")
+                        data = dataset.read([1, 2, 3], masked=True).astype(np.float32)
+                        rgb = np.moveaxis(data.filled(np.nan), 0, -1)
+                        valid = dataset.dataset_mask() > 0
+                        valid &= np.all(np.isfinite(rgb), axis=2)
+                        return rgb, valid
+                with Image.open(path) as image:
+                    rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
+                return rgb, np.all(np.isfinite(rgb), axis=2)
+
+            before_rgb, before_valid = read_rgb_and_validity(before_path)
+            after_rgb, after_valid = read_rgb_and_validity(after_path)
 
             if before_rgb.shape != after_rgb.shape:
                 return {
@@ -2376,13 +2319,18 @@ class SatQueryOrchestrator:
                     "reason": "RGB support check requires aligned images with identical dimensions.",
                 }
 
+            valid = before_valid & after_valid
+            valid_pixel_count = int(valid.sum())
+            if valid_pixel_count == 0:
+                return {"available": False, "reason": "RGB support check has no valid overlapping pixels."}
+
             absolute_difference = np.abs(after_rgb - before_rgb)
             per_pixel_difference = np.mean(absolute_difference, axis=2)
 
-            mean_difference = float(np.mean(absolute_difference))
-            gt10 = float(np.mean(per_pixel_difference > 10.0) * 100.0)
-            gt20 = float(np.mean(per_pixel_difference > 20.0) * 100.0)
-            gt30 = float(np.mean(per_pixel_difference > 30.0) * 100.0)
+            mean_difference = float(np.mean(absolute_difference[valid]))
+            gt10 = float(np.mean(per_pixel_difference[valid] > 10.0) * 100.0)
+            gt20 = float(np.mean(per_pixel_difference[valid] > 20.0) * 100.0)
+            gt30 = float(np.mean(per_pixel_difference[valid] > 30.0) * 100.0)
 
             if gt20 >= 25.0 or mean_difference >= 20.0:
                 level = "significant_visual_difference"
@@ -2395,7 +2343,7 @@ class SatQueryOrchestrator:
 
             saved_path = None
             if evidence_path:
-                diff = np.clip(per_pixel_difference, 0, 255).astype(np.uint8)
+                diff = np.where(valid, np.clip(per_pixel_difference, 0, 255), 0).astype(np.uint8)
                 Image.fromarray(diff, mode="L").save(evidence_path)
                 saved_path = str(evidence_path)
 
@@ -2406,6 +2354,8 @@ class SatQueryOrchestrator:
                 "pixels_difference_gt_10_pct": round(gt10, 4),
                 "pixels_difference_gt_20_pct": round(gt20, 4),
                 "pixels_difference_gt_30_pct": round(gt30, 4),
+                "valid_pixel_count": valid_pixel_count,
+                "valid_pixel_percentage": round(valid_pixel_count * 100.0 / valid.size, 4),
                 "evidence_path": saved_path,
                 "role": "supporting_non_semantic_evidence",
                 "note": (
@@ -2611,6 +2561,31 @@ class SatQueryOrchestrator:
         self._check_file(before_path)
         self._check_file(after_path)
 
+        # This legacy UI executor does not reproject or register inputs. Do
+        # not let equal-sized but geographically shifted rasters reach pixel
+        # comparison, semantic inference, or ChangeFormer.
+        from ai.validation import InputValidator
+        input_validation = InputValidator().validate_change_pair(before_path, after_path)
+        if not input_validation.get("valid"):
+            return {
+                "success": False,
+                "intent": "change_detection",
+                "error": "SpatialInputValidationFailed",
+                "message": "The before/after pair is not on a valid common comparison grid.",
+                "input_validation": input_validation,
+            }
+
+        input_before_year = self._extract_year_from_path(before_path)
+        input_after_year = self._extract_year_from_path(after_path)
+        if input_before_year is not None and input_after_year is not None and input_before_year >= input_after_year:
+            return {
+                "success": False,
+                "intent": "change_detection",
+                "error": "InvalidTemporalOrder",
+                "message": "Before imagery must precede after imagery when dated input names are supplied.",
+                "input_validation": input_validation,
+            }
+
         normalized_class = (
             requested_class.lower().strip()
             if requested_class
@@ -2656,7 +2631,7 @@ class SatQueryOrchestrator:
         before_year = years[0] if len(years) >= 1 else None
         after_year = years[1] if len(years) >= 2 else None
 
-        evidence_dir = Path("outputs") / "evidence"
+        evidence_dir = Path("outputs") / "evidence" / f"ana_{uuid4().hex}"
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
         rgb_difference_path = evidence_dir / "bitemporal_rgb_difference.png"
@@ -2840,6 +2815,7 @@ class SatQueryOrchestrator:
             ],
             "before_image": str(before_path),
             "after_image": str(after_path),
+            "input_validation": self._make_json_safe(input_validation),
             "requested_class": normalized_class or "overall",
             "answer": answer,
             "description": answer,
@@ -2856,6 +2832,8 @@ class SatQueryOrchestrator:
             "execution_summary": {
                 "before_year": before_year,
                 "after_year": after_year,
+                "temporal_order_evidence": "dated_input_filenames" if input_before_year is not None and input_after_year is not None else "query_or_unspecified",
+                "spatial_alignment": "validated_common_grid",
                 "primary_evidence": primary_evidence,
                 "spectral_available": bool(spectral_assessment.get("available")),
                 "semantic_available": bool(semantic_assessment.get("available")),
@@ -2894,6 +2872,65 @@ class SatQueryOrchestrator:
     # ==========================================================
     # CHANGE RESULT SERIALIZATION
     # ==========================================================
+
+    @staticmethod
+    def _evaluate_semantic_quality(
+        before_pct: Dict[str, float],
+        after_pct: Dict[str, float],
+        deltas: Dict[str, float],
+    ) -> Dict[str, Any]:
+        """Evaluate semantic evidence with explicit threshold semantics."""
+        classes = ("water", "vegetation", "built_up", "bare_land")
+        before_unknown = float(before_pct.get("unknown", 0.0))
+        after_unknown = float(after_pct.get("unknown", 0.0))
+        before_known = float(before_pct.get("known_total", 0.0))
+        after_known = float(after_pct.get("known_total", 0.0))
+        before_class = max(classes, key=lambda key: float(before_pct.get(key, 0.0)))
+        after_class = max(classes, key=lambda key: float(after_pct.get(key, 0.0)))
+        before_dominant = float(before_pct.get(before_class, 0.0))
+        after_dominant = float(after_pct.get(after_class, 0.0))
+        max_delta = max((abs(float(value)) for value in deltas.values()), default=0.0)
+        reasons = []
+        if before_unknown > 35.0:
+            reasons.append(f"before-image unknown coverage is {before_unknown:.1f}% (limit 35.0%)")
+        if after_unknown > 35.0:
+            reasons.append(f"after-image unknown coverage is {after_unknown:.1f}% (limit 35.0%)")
+        if before_known < 65.0:
+            reasons.append(f"before-image known-class coverage is only {before_known:.1f}%")
+        if after_known < 65.0:
+            reasons.append(f"after-image known-class coverage is only {after_known:.1f}%")
+
+        extreme = max(before_dominant, after_dominant) >= 98.0 and max_delta >= 50.0
+        if extreme:
+            reasons.append(
+                "semantic output contains an extreme single-class prediction combined with an extreme temporal class shift"
+            )
+
+        score = 1.0 - min(0.65, max(before_unknown, after_unknown) / 100.0 * 0.75)
+        if extreme:
+            score -= 0.25
+
+        return {
+            "passed": not reasons,
+            "score": round(max(0.0, min(1.0, score)), 4),
+            "reasons": reasons,
+            "thresholds": {
+                "max_unknown_pct": 35.0,
+                "min_known_coverage_pct": 65.0,
+                "extreme_dominant_pct": 98.0,
+                "extreme_transition_pp": 50.0,
+                "semantics": "unknown coverage fails only above 35.0%; known coverage fails only below 65.0%",
+            },
+            "before_unknown_pct": round(before_unknown, 4),
+            "after_unknown_pct": round(after_unknown, 4),
+            "before_known_coverage_pct": round(before_known, 4),
+            "after_known_coverage_pct": round(after_known, 4),
+            "before_dominant_class": before_class,
+            "before_dominant_pct": round(before_dominant, 4),
+            "after_dominant_class": after_class,
+            "after_dominant_pct": round(after_dominant, 4),
+            "max_abs_class_delta_pp": round(max_delta, 4),
+        }
 
     @staticmethod
     def _serialize_change_result(

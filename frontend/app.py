@@ -2673,6 +2673,13 @@ def map_view():
         "map.html"
     )
 
+@app.route("/why-satquery")
+@app.route("/why_satquery")
+def why_satquery():
+    return render_template(
+        "why_satquery.html"
+    )
+
 
 @app.route("/api/map-artifacts/<job_id>/<path:artifact_path>")
 def map_artifact_proxy(job_id: str, artifact_path: str):
@@ -3209,16 +3216,14 @@ def analyze():
                     False,
 
                 "error":
-                    str(exc),
+                    "analysis_execution_failed",
 
                 "answer":
-                    str(exc),
+                    "The analysis could not be completed. Please verify the input imagery and try again.",
 
                 "confidence":
                     0,
 
-                "traceback":
-                    traceback.format_exc(),
             }
         ), 500
 
@@ -3782,10 +3787,9 @@ def map_analyze():
                     False,
 
                 "error":
-                    str(exc),
+                    "analysis_execution_failed",
 
-                "answer":
-                    str(exc),
+                "answer": "The analysis could not be completed. Please verify the input imagery and try again.",
             }
         ), 500
 
@@ -4142,8 +4146,8 @@ def map_temporal_analyze():
         return jsonify(
             {
                 "success": False,
-                "error": str(exc),
-                "answer": str(exc),
+                "error": "analysis_execution_failed",
+                "answer": "The analysis could not be completed. Please verify the input imagery and try again.",
             }
         ), 500
 

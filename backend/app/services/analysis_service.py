@@ -108,14 +108,32 @@ def _generate_task_change_layer(job_dir, plan, request):
             return None
 
         with rasterio.open(before_path) as src_before:
-            before = src_before.read(profile["band"]).astype("float32")
-        with rasterio.open(after_path) as src_after:
-            after = src_after.read(profile["band"]).astype("float32")
+            with rasterio.open(after_path) as src_after:
+                if (not src_before.crs or src_before.crs != src_after.crs
+                        or src_before.transform != src_after.transform
+                        or src_before.shape != src_after.shape):
+                    raise QueryError("unaligned_evidence", "Spectral evidence requires matching CRS, extent and pixel grids.", 422)
+                # PNG bounds alone cannot encode a rotated/projected grid.
+                if src_before.crs.to_epsg() != 4326 or src_before.transform.b or src_before.transform.d:
+                    raise QueryError("unsupported_evidence_grid", "Map evidence must be reprojected to a north-up WGS84 grid.", 422)
+                before = src_before.read(profile["band"], masked=True).astype("float32").filled(np.nan)
+                after = src_after.read(profile["band"], masked=True).astype("float32").filled(np.nan)
+                evidence_bounds = list(src_before.bounds)
+                evidence_transform = src_before.transform
+                if request.aoi is None:
+                    raise QueryError("missing_aoi", "Map evidence requires the requested polygon.", 422)
+                from rasterio.features import geometry_mask
+                from shapely.geometry import box, shape
+                geometry = request.aoi.model_dump(mode="json")
+                if not box(*evidence_bounds).covers(shape(geometry)):
+                    raise QueryError("insufficient_coverage", "Spectral imagery does not cover the requested AOI.", 422)
+                inside = geometry_mask([geometry], out_shape=before.shape,
+                                       transform=evidence_transform, invert=True)
 
         if before.shape != after.shape or before.size == 0:
             return None
 
-        valid = np.isfinite(before) & np.isfinite(after)
+        valid = np.isfinite(before) & np.isfinite(after) & inside
         delta = after - before
         threshold = float(profile["threshold"])
         if profile["key"] == "water":
@@ -133,7 +151,7 @@ def _generate_task_change_layer(job_dir, plan, request):
         negative_count = int(negative.sum())
         changed_count = int(changed.sum())
         if valid_count <= 0:
-            return None
+            raise QueryError("empty_valid_region", "No valid common spectral pixels lie inside the requested AOI.", 422)
 
         rgba = np.zeros((delta.shape[0], delta.shape[1], 4), dtype=np.uint8)
         rgba[positive] = profile["positive_rgba"]
@@ -151,19 +169,6 @@ def _generate_task_change_layer(job_dir, plan, request):
         out_path = evidence_dir / profile["filename"]
         Image.fromarray(rgba, mode="RGBA").save(out_path)
 
-        west = south = east = north = None
-        try:
-            coords = request.aoi.coordinates[0]
-            lons = [float(pt[0]) for pt in coords]
-            lats = [float(pt[1]) for pt in coords]
-            west, east = min(lons), max(lons)
-            south, north = min(lats), max(lats)
-            from gee_temporal import bbox_size_km
-            width_km, height_km = bbox_size_km([west, south, east, north])
-            area_km2 = width_km * height_km
-        except Exception:
-            area_km2 = None
-
         positive_pct = positive_count * 100.0 / valid_count
         negative_pct = negative_count * 100.0 / valid_count
         changed_pct = changed_count * 100.0 / valid_count
@@ -180,18 +185,15 @@ def _generate_task_change_layer(job_dir, plan, request):
             "negative_percentage": round(negative_pct, 3),
             "changed_percentage": round(changed_pct, 3),
             "method": "water_class_transition" if profile["key"] == "water" else "index_delta_threshold",
-            "affected_area_km2": (
-                round(area_km2 * changed_pct / 100.0, 4)
-                if area_km2 is not None else None
-            ),
-            "positive_area_km2": (
-                round(area_km2 * positive_pct / 100.0, 4)
-                if area_km2 is not None else None
-            ),
-            "negative_area_km2": (
-                round(area_km2 * negative_pct / 100.0, 4)
-                if area_km2 is not None else None
-            ),
+            "affected_area_km2": None,
+            "positive_area_km2": None,
+            "negative_area_km2": None,
+            "valid_pixel_count": valid_count,
+            "aoi_pixel_count": int(inside.sum()),
+            "analysis_coverage_pct": valid_count * 100.0 / int(inside.sum()),
+            "bounds_wgs84": evidence_bounds,
+            "pixel_center_aoi_statistics": True,
+            "exact_aoi_statistics": False,
             "artifact": str(out_path.relative_to(job_dir)).replace("\\", "/"),
             "legend": [
                 {"label": profile["positive_label"], "rgba": list(profile["positive_rgba"])},
@@ -201,9 +203,12 @@ def _generate_task_change_layer(job_dir, plan, request):
             "note": (
                 "Pixel percentages are thresholded spectral-index change over "
                 "the aligned comparison grid; they are evidence indicators, "
-                "not direct object counts or cadastral measurements."
+                "not direct object counts or cadastral measurements. Polygon masking uses pixel centers; "
+                "physical area is unavailable in this local fallback."
             ),
         }
+    except QueryError:
+        raise
     except Exception:
         logger.exception("Could not generate task-specific change layer for %s", job_dir.name)
         return None
@@ -279,6 +284,7 @@ def _generate_task_change_layer_ee(job_dir, plan, request):
             ],
             "note": note,
             "generation": "earth_engine_direct",
+            "bounds_wgs84": bounds,
         }
     except Exception:
         logger.exception("Could not generate direct Earth Engine task layer for %s", job_dir.name)
@@ -317,9 +323,20 @@ def _generate_scene_comparison(job_dir, plan, task_layer):
         evidence_dir = job_dir / "outputs" / "evidence"
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
+        scene_references = {}
+
         def rgb_png(tif_path, year):
             with rasterio.open(tif_path) as src:
                 arr = src.read([1, 2, 3])
+                # These previews preserve the complete, north-up geographic
+                # raster extent. Do not assign bounds to rotated/projected PNGs.
+                if (src.crs and src.crs.to_epsg() == 4326
+                        and src.transform.b == 0 and src.transform.d == 0
+                        and src.transform.a > 0 and src.transform.e < 0):
+                    scene_references[f"outputs/evidence/scene_{year}_rgb.png"] = {
+                        "bounds": list(src.bounds), "crs": "EPSG:4326",
+                        "source_artifact": tif_path.relative_to(job_dir).as_posix(),
+                    }
             arr = np.moveaxis(arr, 0, -1)
             if arr.dtype != np.uint8:
                 out = np.zeros_like(arr, dtype=np.uint8)
@@ -400,6 +417,7 @@ def _generate_scene_comparison(job_dir, plan, task_layer):
             "change_available": bool(change_artifact),
             "change_unavailable_reason": None if change_artifact else "Task-specific change evidence was not produced for this execution.",
             "comparison_artifact": str(comparison_path.relative_to(job_dir)).replace("\\", "/"),
+            "scene_references": scene_references,
         }
     except Exception:
         logger.exception("Could not generate scene comparison for %s", job_dir.name)
@@ -578,8 +596,12 @@ def _execution_source_consistency(expected, actual):
     expected_pairs = []
     for key in ("before", "after"):
         item = expected.get(key) or {}
-        if item.get("year") is not None and item.get("collection_label"):
-            expected_pairs.append((int(item["year"]), str(item["collection_label"])))
+        collections = {
+            str(value) for value in (item.get("collection_id"), item.get("collection_label"))
+            if value
+        }
+        if item.get("year") is not None and collections:
+            expected_pairs.append((int(item["year"]), collections))
     actual_pairs = []
     for item in actual:
         try:
@@ -588,11 +610,21 @@ def _execution_source_consistency(expected, actual):
             continue
     if not expected_pairs:
         return {"status": "not_applicable", "matched": None, "expected": [], "actual": actual_pairs}
-    matched = expected_pairs == actual_pairs
+    matched = (
+        len(expected_pairs) == len(actual_pairs)
+        and all(
+            expected_year == actual_year and actual_collection in expected_collections
+            for (expected_year, expected_collections), (actual_year, actual_collection)
+            in zip(expected_pairs, actual_pairs)
+        )
+    )
     return {
         "status": "matched" if matched else "changed",
         "matched": matched,
-        "expected": expected_pairs,
+        "expected": [
+            {"year": year, "collections": sorted(collections)}
+            for year, collections in expected_pairs
+        ],
         "actual": actual_pairs,
         "note": (
             "Execution used the imagery sources previewed during planning."
@@ -756,7 +788,12 @@ class AnalysisService:
                 raw.get("imagery_provenance") or [],
             )
             if source_consistency.get("matched") is False:
-                limitations.append(source_consistency.get("note"))
+                raise QueryError(
+                    "imagery_plan_mismatch",
+                    "Execution imagery does not match the approved imagery plan. "
+                    "No result, evidence, or report was published.",
+                    409,
+                )
 
             artifacts = sorted(
                 str(path.relative_to(job_dir)).replace("\\", "/")
@@ -772,10 +809,31 @@ class AnalysisService:
                 inputs=paths,
                 imagery=raw.get("imagery_provenance") or [],
             )
+            if temporal_result:
+                # The actual intersection grid is authoritative, not either
+                # input's full extent or a metadata-only inferred ROI.
+                grid = temporal_result["effective_roi"]
+                for name in ("roi", "result"):
+                    analysis_context[name].update(grid)
+                from rasterio.warp import transform_bounds
+                analysis_context["roi"]["display_bounds_wgs84"] = list(
+                    transform_bounds(grid["crs"], "EPSG:4326", *grid["bounds"], densify_pts=21)
+                )
             evidence_identity = evidence_records(
                 analysis_id=job_id, context=analysis_context, artifacts=artifacts,
                 aoi=request.aoi, job_dir=job_dir,
             )
+            # Only a renderer with a known output footprint may assign PNG
+            # map coordinates. A result ID alone does not georeference pixels.
+            if task_layer and task_layer.get("bounds_wgs84"):
+                for record in evidence_identity:
+                    if record["path"] == task_layer.get("artifact"):
+                        record.update(georeferenced=True, crs="EPSG:4326",
+                                      bounds=task_layer["bounds_wgs84"])
+            for record in evidence_identity:
+                reference = (comparison or {}).get("scene_references", {}).get(record["path"])
+                if reference:
+                    record.update(georeferenced=True, **reference)
             spatial_consistency = validate_spatial_consistency(analysis_context, evidence_identity)
             if spatial_consistency["status"] == "FAIL":
                 raise QueryError("spatial_consistency_failed", "; ".join(spatial_consistency["failures"]), 500)

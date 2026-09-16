@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import rasterio
+import numpy as np
 
 
 SUPPORTED_RASTER_EXTENSIONS = {
@@ -45,8 +46,8 @@ class RasterLoader:
                     f"Available bands: 1-{dataset.count}"
                 )
 
-            return dataset.read(band_number)
+            return dataset.read(band_number, masked=True).astype(np.float32).filled(np.nan)
 
     def read_all_bands(self, raster_path: str):
         with self.open(raster_path) as dataset:
-            return dataset.read()
+            return dataset.read(masked=True).astype(np.float32).filled(np.nan)

@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/map.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/map-workspace.css') }}">
 </head>
-<body>
+<body class="insights-open">
 <div class="app-shell">
   <header class="topbar">
     <a href="/" class="brand" aria-label="SatQuery AI home">
@@ -31,7 +31,7 @@
 
     <div class="workspace-actions">
       <button id="toggleCommandBtn" class="header-action" type="button" aria-expanded="true" aria-controls="commandPanel">Focus map</button>
-      <button id="toggleInsightsBtn" class="header-action" type="button" aria-expanded="false" aria-controls="insightsPanel">Insights <span aria-hidden="true">↗</span></button>
+      <button id="toggleInsightsBtn" class="header-action" type="button" aria-expanded="true" aria-controls="insightsPanel">Insights <span aria-hidden="true">↗</span></button>
     <div class="system-pill" id="systemPill" role="status">
       <span class="system-dot"></span>
       <span id="systemLabel">Connecting engine…</span>
@@ -44,8 +44,8 @@
     <div class="map-vignette" aria-hidden="true"></div>
 
     <aside class="glass-panel command-panel" id="commandPanel" aria-label="New investigation">
-      <div class="panel-kicker"><span class="observatory-dot"></span> A NEW PERSPECTIVE</div>
-      <h1>Every place<br> has a story.</h1>
+      <div class="panel-kicker"><span class="observatory-dot"></span> MAP DASHBOARD</div>
+      <h1>Explore your area.</h1>
       <p class="panel-copy">Find what changed. Explore satellite evidence with a question.</p>
       <label class="step-label" for="locationSearchInput"><span>01</span> Find your place</label>
 
@@ -90,17 +90,17 @@
       </div>
 
       <button id="sendAoiQueryBtn" class="primary-btn" type="button">
-        <span>Explore this area</span><span aria-hidden="true">↗</span>
+        <span>Analyze with SatQuery AI</span><span aria-hidden="true">↗</span>
       </button>
       <div id="backendConnectionStatus" class="micro-status" role="status">Select an area to start your investigation.</div>
       <div class="keyboard-hint">Ctrl / ⌘ + Enter to analyze <span>Esc to exit drawing</span></div>
     </aside>
 
-    <aside class="glass-panel intelligence-panel" id="insightsPanel" aria-label="Investigation insights" hidden>
+    <aside class="glass-panel intelligence-panel" id="insightsPanel" aria-label="Analysis results">
       <div class="intelligence-head">
         <div>
-          <div class="panel-kicker">YOUR INVESTIGATION</div>
-          <h2>Field notes</h2>
+          <div class="panel-kicker">SATELLITE INTELLIGENCE</div>
+          <h2>Analysis Result</h2>
         </div>
         <span id="backendStateBadge" class="state-badge">Standby</span>
       </div>
@@ -154,6 +154,33 @@
           <span id="resultQualityBadge" class="quality-badge">Validated</span>
         </div>
 
+        <p id="resultQuery" class="result-query"></p>
+        <div id="resultContext" class="result-context"></div>
+        <nav class="result-navigation" aria-label="Analysis sections">
+          <button type="button" data-result-target="resultTitle" class="active">Overview</button>
+          <button type="button" data-result-target="comparisonViewer">Visual Evidence</button>
+          <button type="button" data-result-target="changeStatistics">Statistics</button>
+          <button type="button" data-result-target="technicalDetails">Report</button>
+        </nav>
+        <div id="comparisonViewer" class="comparison-viewer hidden">
+          <div class="comparison-head"><div><span>VISUAL EVIDENCE</span><strong id="comparisonHeading">Before · After · Detected Change</strong></div><button id="openComparisonBtn" class="text-btn" type="button">Expand</button></div>
+          <div class="comparison-grid">
+            <button class="comparison-card" type="button" data-comparison="before"><img id="compareBeforeImg" alt="Before scene"><span id="compareBeforeLabel">Before</span></button>
+            <button class="comparison-card" type="button" data-comparison="after"><img id="compareAfterImg" alt="After scene"><span id="compareAfterLabel">After</span></button>
+            <button id="comparisonChangeCard" class="comparison-card" type="button" data-comparison="change"><img id="compareChangeImg" alt="Detected change"><span id="comparisonChangeLabel">Detected change</span></button>
+          </div>
+        </div>
+
+        <section id="changeStatistics" class="change-statistics" aria-label="Change statistics">
+          <h3>Change Statistics <small>(Valid analyzed area)</small></h3>
+          <div class="change-stat-grid">
+            <div class="change-stat gain"><strong id="predictionGain">&mdash;</strong><span id="predictionGainLabel">Gain</span><small id="predictionGainArea"></small></div>
+            <div class="change-stat loss"><strong id="predictionLoss">&mdash;</strong><span id="predictionLossLabel">Loss</span><small id="predictionLossArea"></small></div>
+            <div class="change-stat stable"><strong id="predictionStable">&mdash;</strong><span>No significant change</span><small id="predictionStableArea"></small></div>
+          </div>
+          <div class="net-change"><span>Net directional change</span><strong id="predictionNet">Unavailable</strong></div>
+          <p id="predictionNote" class="prediction-note">Run an analysis to see measured change.</p>
+        </section>
         <div class="result-metrics" id="resultMetrics">
           <div class="result-metric result-metric-hero"><span>Detected-change area</span><strong id="metricArea">—</strong></div>
           <div class="result-metric result-metric-hero"><span>Changed share</span><strong id="metricShare">—</strong></div>
@@ -164,10 +191,14 @@
         </div>
 
         <div class="ai-summary-card">
-          <span>AI SUMMARY</span>
+          <span>Key Insight</span>
           <p id="mapAnswer">No completed analysis loaded yet.</p>
         </div>
 
+        <div id="evidenceGallery" class="evidence-gallery hidden"></div>
+
+        <details class="technical-details" id="technicalDetails">
+          <summary>Technical Details &amp; Limitations</summary>
         <div class="quality-grid">
           <div><span>Workflow confidence</span><strong id="qualityRouting">—</strong></div>
           <div><span>Data quality</span><strong id="qualityData">—</strong></div>
@@ -186,19 +217,7 @@
           <div id="validationFlags" class="validation-flags"></div>
         </div>
 
-        <div id="comparisonViewer" class="comparison-viewer hidden">
-          <div class="comparison-head"><div><span>VISUAL EVIDENCE</span><strong id="comparisonHeading">Before · After · Detected Change</strong></div><button id="openComparisonBtn" class="text-btn" type="button">Expand</button></div>
-          <div class="comparison-grid">
-            <button class="comparison-card" type="button" data-comparison="before"><img id="compareBeforeImg" alt="Before scene"><span id="compareBeforeLabel">Before</span></button>
-            <button class="comparison-card" type="button" data-comparison="after"><img id="compareAfterImg" alt="After scene"><span id="compareAfterLabel">After</span></button>
-            <button id="comparisonChangeCard" class="comparison-card" type="button" data-comparison="change"><img id="compareChangeImg" alt="Detected change"><span id="comparisonChangeLabel">Detected change</span></button>
-          </div>
-        </div>
 
-        <div id="evidenceGallery" class="evidence-gallery hidden"></div>
-
-        <details class="technical-details" id="technicalDetails">
-          <summary>Technical evidence & limitations</summary>
           <div id="technicalEvidence" class="technical-copy">No technical evidence loaded.</div>
         </details>
 
@@ -259,6 +278,11 @@
   </main>
 </div>
 
+<dialog id="evidencePreview" class="evidence-preview" aria-labelledby="evidencePreviewTitle">
+  <div class="evidence-preview-head"><h2 id="evidencePreviewTitle">Evidence preview</h2><form method="dialog"><button type="submit" aria-label="Close evidence preview">&times;</button></form></div>
+  <p>This image is a visual reference. Geographic coordinates are unavailable for this preview.</p>
+  <img id="evidencePreviewImg" alt="Evidence preview">
+</dialog>
 <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <script src="{{ url_for('static', filename='js/map.js') }}"></script>
 </body>

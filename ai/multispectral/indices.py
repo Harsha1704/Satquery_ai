@@ -16,8 +16,8 @@ def _validate_bands(band_a, band_b):
     Validate two spectral bands.
     """
 
-    band_a = np.asarray(band_a, dtype=np.float32)
-    band_b = np.asarray(band_b, dtype=np.float32)
+    band_a = np.ma.asarray(band_a, dtype=np.float32).filled(np.nan)
+    band_b = np.ma.asarray(band_b, dtype=np.float32).filled(np.nan)
 
     if band_a.shape != band_b.shape:
         raise ValueError(
@@ -48,8 +48,8 @@ def normalized_difference(
     result = np.divide(
         band_a - band_b,
         denominator,
-        out=np.zeros_like(band_a),
-        where=np.abs(denominator) > epsilon
+        out=np.full_like(band_a, np.nan),
+        where=np.isfinite(band_a) & np.isfinite(band_b) & (np.abs(denominator) > epsilon)
     )
 
     return result.astype(np.float32)
@@ -132,6 +132,7 @@ def index_statistics(index: np.ndarray) -> dict:
         )
 
     return {
+        "valid_pixel_count": int(finite.size),
         "min": float(np.min(finite)),
         "max": float(np.max(finite)),
         "mean": float(np.mean(finite)),

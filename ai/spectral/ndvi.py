@@ -12,17 +12,8 @@ class NDVIEngine:
         nir_band: np.ndarray
     ) -> np.ndarray:
 
-        red = red_band.astype(np.float32)
-        nir = nir_band.astype(np.float32)
-
-        denominator = nir + red
-
-        ndvi = np.divide(
-            nir - red,
-            denominator,
-            out=np.zeros_like(denominator, dtype=np.float32),
-            where=denominator != 0
-        )
+        from ai.multispectral.indices import normalized_difference
+        ndvi = normalized_difference(nir_band, red_band)
 
         return np.clip(ndvi, -1.0, 1.0)
 
@@ -31,16 +22,12 @@ class NDVIEngine:
         valid = ndvi[np.isfinite(ndvi)]
 
         if valid.size == 0:
-            return {
-                "min": None,
-                "max": None,
-                "mean": None,
-                "vegetation_percentage": 0.0
-            }
+            raise ValueError("Spectral index contains no finite values.")
 
         vegetation_pixels = np.sum(valid > 0.2)
 
         return {
+            "valid_pixel_count": int(valid.size),
             "min": float(np.min(valid)),
             "max": float(np.max(valid)),
             "mean": float(np.mean(valid)),

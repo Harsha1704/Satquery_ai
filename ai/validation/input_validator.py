@@ -848,6 +848,7 @@ class InputValidator:
             first,
             second,
             issues,
+            context,
         )
 
     def _compare_resolution(
@@ -940,6 +941,7 @@ class InputValidator:
         first: ImageMetadata,
         second: ImageMetadata,
         issues: List[ValidationIssue],
+        context: str,
     ):
 
         if (
@@ -954,13 +956,14 @@ class InputValidator:
             rtol=1e-5,
             atol=1e-5,
         ):
+            level = "error" if context == "bi_temporal" else "warning"
             issues.append(
                 ValidationIssue(
-                    level="warning",
-                    code="TRANSFORM_MISMATCH",
+                    level=level,
+                    code="GRID_MISALIGNMENT" if context == "bi_temporal" else "TRANSFORM_MISMATCH",
                     message=(
                         "Raster transforms differ. "
-                        "Images may not be perfectly co-registered."
+                        "Images are not on the same comparison grid."
                     ),
                 )
             )
@@ -1025,4 +1028,4 @@ class InputValidator:
             ],
             "error_count": len(errors),
             "warning_count": len(warnings),
-        }   
+        }

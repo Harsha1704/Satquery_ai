@@ -4,6 +4,8 @@ import math
 from pathlib import Path
 import traceback
 
+import requests
+
 from query_engine.legacy_adapter import execute_legacy
 from query_engine.policy import QueryError
 from query_engine.schemas import AnalysisPlan, AnalysisRequest
@@ -69,6 +71,12 @@ def run(payload):
             raise QueryError("aoi_too_large", "Select a smaller area for historical analysis.", 413) from exc
         except gee.NoImageryError as exc:
             raise QueryError("no_imagery", "No usable imagery was found for this area and time range.") from exc
+        except (ConnectionError, TimeoutError, requests.RequestException) as exc:
+            raise QueryError(
+                "imagery_service_unavailable",
+                "The satellite imagery service could not be reached. Please retry after connectivity is restored.",
+                503,
+            ) from exc
     # Local, explicit before/after inputs use the deterministic temporal
     # engine directly. It retains the existing legacy adapter for specialist
     # flows that do not yet have an equivalent temporal implementation.
